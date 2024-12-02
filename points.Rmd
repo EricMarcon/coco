@@ -226,6 +226,7 @@ the_quadrats %>%
   scale_x_continuous(breaks = (0:10) * 10) +
   scale_y_continuous(breaks = (0:10) * 10) +
   coord_fixed() +
+  theme(axis.text.x = element_text(angle = 90)) +
   labs(color = "Plot") +
   facet_grid(~ plot)
 ```
