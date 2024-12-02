@@ -198,11 +198,7 @@ for (i in seq_len(nrow(the_quadrats))) {
     y_down = the_quadrats[
       the_quadrats$plot == the_quadrats[i, "plot"] &
         the_quadrats$point_x == the_quadrats[i, "point_x"] &
-```
-
-
-```{r}
-the_quadrats$point_y == max(the_quadrats[i, "point_y"] - 1, 0),
+        the_quadrats$point_y == max(the_quadrats[i, "point_y"] - 1, 0),
       "y"
     ]
     the_quadrats[i, c("x", "y")] <- 
