@@ -1,5 +1,5 @@
 ---
-title: "Correction de position"
+title: "Correction des coordonnées"
 output: html_document
 date: "`r Sys.Date()`"
 ---
