@@ -14,36 +14,36 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ## Fonction de triangulation
 
+On connaît la position des points à gauche $(x_{left}, y_{left})$ et en dessous $(x_{down}, y_{down})$ du point à placer (à l'intersection des deux cercles), ainsi que les distances entre eux et le point à placer: $d_{left}$ et $d_{down}$.
+Par construction de l'algorithme, le point à placer est situé au dessus et à droite des points précédents.
 
-```{r, echo=FALSE}
+```{r, echo=FALSE, out.width="100%"}
 knitr::include_graphics("images/trigonometry.png")
 ```
-
-On connaît la position des points à gauche $(x_{left}, y_{left})$ et en dessous $(x_{down}, y_{down})$ du point à placer ("next"), ainsi que les distances entre eux et le point à placer: $d_{left}$ et $d_{down}$.
 
 Par le théorème de Pythagore, on connaît:
 
 - la distance entre les points de gauche et du bas:
-$$d =  \sqrt{(x_{left} - x_{down})^2 + (y_{left} -y_{down})^2}$$
-- deux équations reliant $a$ et $h$
+$$d =  \sqrt{(x_{left} - x_{down})^2 + (y_{left} -y_{down})^2},$$
+- et deux équations reliant $a$ et $h$
 \begin{align}
-a^2 + h^2 &= d_{left}^2\\
-(d - a)^2 + h^2 &= d_{down}^2
+a^2 + h^2 &= d_{left}^2,\\
+(d - a)^2 + h^2 &= d_{down}^2.
 \end{align}
 
 
 La première équation du système permet d'isoler $h$:
-$$h^2 = d_{left}^2 - a^2$$
-En substituant $h^2$ dans la deuxième équation:
-$$(d - a)^2 + d_{left}^2 - a^2= d_{down}^2$$
+$$h^2 = d_{left}^2 - a^2.$$
+En substituant $h^2$ dans la deuxième équation
+$$(d - a)^2 + d_{left}^2 - a^2= d_{down}^2,$$
 d'où
 $$a = \frac{d^2 + d_{left}^2 - d_{down}^2}{2d}$$
 et
-$$h = \sqrt{d_{left}^2 - a^2}$$
+$$h = \sqrt{d_{left}^2 - a^2}.$$
 
 Les distances entre les points précédents et le point suivant sont calculées en projetant $a$ et $h$ sur les axes du repère. 
 Pour cela, l'angle $\alpha$ est calculé:
-$$\alpha = \arctan{\frac{x_{down} - x_{left}}{y_{left} - y_{down}}}$$
+$$\alpha = \arctan{\frac{x_{down} - x_{left}}{y_{left} - y_{down}}}.$$
 
 Il reste à projeter:
 
@@ -59,7 +59,7 @@ et
 \begin{equation} 
 \begin{split}
 d_{down} & = y_a + y_h\\
- & = (d - a) \sin{(\frac{\pi}{2} - \alpha)} + h \sin\alpha
+ & = (d - a) \sin{(\frac{\pi}{2} - \alpha)} + h \sin\alpha.
 \end{split}
 \end{equation}
 
@@ -224,7 +224,7 @@ for (i in seq_len(nrow(the_quadrats))) {
 Le dataframe `the_quadrats` contient maintenant la position des quadrats.
 
 Figure:
-```{r}
+```{r, out.width="100%"}
 the_quadrats %>% 
   ggplot(aes(x = x, y = y, color = as.factor(plot))) +
   geom_point() +
