@@ -234,7 +234,7 @@ the_quadrats %>%
   coord_fixed() +
   theme(axis.text.x = element_text(angle = 90)) +
   labs(color = "Plot") +
-  facet_grid(~ plot)
+  facet_wrap(~ plot, nrow = 2)
 ```
 
 
