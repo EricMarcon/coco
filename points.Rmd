@@ -10,6 +10,187 @@ output:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+# Problème à traiter
+
+Les petits arbres de 9 hectares de la parcelle 16 de Paracou sont localisés sur le terrain dans des quadrats de 10m sur 10m, eux-mêmes regroupés dans des sous-parcelles d'un hectare dont la position des sommets (nommés B.1 à B.13) est connue très précisément grâce à un relevé de géomètre.
+
+```{r}
+library("tidyverse")
+
+# Paracou 16 shapefile
+library("sf")
+terra::vect("data/Plot16.shp") %>% 
+  st_as_sf() -> paracou_16
+
+# Surveyor's points
+library("readxl")
+read_xlsx("data/plots.xlsx", sheet = "surveyor") %>% 
+  as.data.frame() -> surveyor
+surveyor %>% 
+  st_as_sf(coords = c("x_utm","y_utm")) %>% 
+  st_set_crs(terra::crs(paracou_16)) -> surveyor.sf
+
+# Map
+library("ggspatial")
+ggplot() +
+  geom_sf(data = st_cast(paracou_16)) +
+  geom_sf_text(data = surveyor.sf, aes(label = point), col = "red") +
+  ggtitle("Paracou P16 9ha - Surveyor's points") +
+  annotation_scale(location = "br") +
+  annotation_north_arrow(
+    pad_y = unit(1, "cm"),
+    style = north_arrow_nautical()
+  )
+```
+
+Les sous-parcelles ("subplots") sont définies par leurs quatre coins (haut-gauche, haut-droit, bas-droit, et bas-gauche qui est l'origine du repère local) et numérotées.
+
+```{r}
+read_xlsx("data/plots.xlsx", sheet = "subplots") %>% 
+  as.data.frame() -> subplots
+# Example
+subplots[1:3, ]
+```
+
+Les quadrats de 10m sont marqués par des piquets.
+Leur position est approximative (la progression et les mesures d'angle et de distance en sous-bois sont difficiles) mais les distances entre chaque piquet et ses voisins ont été remesurées précisément au laser.
+
+Enfin, les arbres ont été positionnés dans les quadrats à partir de leur distance aux bords, avec une certaine incertitude.
+
+L'objectif est de replacer le plus précisément possible les arbres dans les sous-parcelles pour obtenir leurs coordonnées dans le référentiel standard local, UTM zone 26N.
+
+# Méthode
+
+Dans un premier temps, les quadrats seront repositionnés à l'intérieur des sous-parcelles, les arbres seront ensuite repositionnés dans chaque quadrat.
+Pour cela:
+
+1. Les coordonnées des sous-parcelles doivent être transformées en coordonnées locales, dont l'origine est le coin inférieur gauche de chacune d'elles.
+2. Les quadrats doivent être repositionnés dans chaque sous-parcelle, sur la base des hypothèses suivantes:
+    - les limites basse et gauche des sous-parcelles parcourues sur le terrain pour y placer les quadrats sont rectilignes,
+    - elles ne sont pas forcément orthogonales: l'angle précis de la base du repère est donné par les mesures du géomètre,
+    - les distances mesurées au laser sont exactes, ce qui permet de calculer de proche en proche la position des points constituant les quadrats par triangulation, à partir de l'origine du repère de la sous-parcelle,
+3. les points obtenus sont replacés dans les limites précises de chaque sous-parcelle par interpolation,
+4. enfin, les arbres sont repositionnés dans les limites précises de chaque quadrat par interpolation.
+
+
+# Coordonnées locales des sous-parcelles
+
+Les sous-parcelles doivent être projetées dans leur système de coordonnées locales: le point en bas à gauche est l’origine du repère.
+
+Le passage des coordonnées locales aux coordonnées UTM est un changement de base (selon les coordonnées des vecteurs unitaires en UTM) suivie d'une translation (selon la position du point d'origine de la sous-parcelle).
+
+## Rotation
+
+La matrice de changement de base (des coordonnées locales aux coordonnées UTM) est calculée par la fonction suivante:
+
+```{r}
+local2utm <- function(subplot, surveyor, subplots) {
+  # Find the points
+  is_origin <- (surveyor$point == subplots[subplots$subplot == subplot, "down_left"])
+  is_down_right <- (surveyor$point == subplots[subplots$subplot == subplot, "down_right"])
+  is_up_left <- (surveyor$point == subplots[subplots$subplot == subplot, "up_left"])
+  
+  # X-axis vector
+  i_dx_utm <- surveyor[is_down_right, "x_utm"] - surveyor[is_origin, "x_utm"]
+  i_dy_utm <- surveyor[is_down_right, "y_utm"] - surveyor[is_origin, "y_utm"]
+  i_length <- sqrt(i_dx_utm^2 + i_dy_utm^2)
+  # Unit vector
+  i <- c(i_dx_utm, i_dy_utm) / i_length
+  
+  # Y-axis vector
+  j_dx_utm <- surveyor[is_up_left, "x_utm"] - surveyor[is_origin, "x_utm"]
+  j_dy_utm <- surveyor[is_up_left, "y_utm"] - surveyor[is_origin, "y_utm"]
+  j_length <- sqrt(j_dx_utm^2 + j_dy_utm^2)
+  # Unit vector
+  j <- c(j_dx_utm, j_dy_utm) / j_length
+
+  return(cbind(i, j))
+}
+
+# Test the function: transition matrix of subplot 13
+local2utm(13, surveyor, subplots)
+```
+
+Le passage des coordonnées UTM aux coordonnées locales utilise la matrice inverse:
+
+```{r}
+# local coordinates of subplot 13, expected to be (100, 0)
+local2utm(13, surveyor, subplots) %>%
+  # UTM to local
+  solve() %*%
+  # UTM vector X
+  c(
+    surveyor[surveyor$point == "B.7", "x_utm"] - 
+      surveyor[surveyor$point == "B.6", "x_utm"],
+    surveyor[surveyor$point == "B.7", "y_utm"] - 
+      surveyor[surveyor$point == "B.6", "y_utm"]
+  )
+```
+## Coordonnées locales
+
+ Les coordonnées locales des sommets des sous-parcelles sont calculées:
+ 
+```{r}
+# Get the UTM coordinates of the points
+subplots %>% 
+  # add coordinates of point up_left
+  left_join(surveyor, by = join_by("up_left" == "point")) %>% 
+  # delete the altitude
+  select(-z_utm) %>% 
+  # rename the columns accoding to the chosen point
+  rename(up_left_x_utm = x_utm, up_left_y_utm = y_utm) %>% 
+  # repeat all three steps for up_right
+  left_join(surveyor, by = join_by("up_right" == "point")) %>% 
+  select(-z_utm) %>% 
+  rename(up_right_x_utm = x_utm, up_right_y_utm = y_utm) %>% 
+  # repeat all three steps for down_right
+  left_join(surveyor, by = join_by("down_right" == "point")) %>% 
+  select(-z_utm) %>% 
+  rename(down_right_x_utm = x_utm, down_right_y_utm = y_utm) %>% 
+  # repeat all three steps for down_left
+  left_join(surveyor, by = join_by("down_left" == "point")) %>% 
+  select(-z_utm) %>% 
+  rename(down_left_x_utm = x_utm, down_left_y_utm = y_utm) ->
+  subplots
+
+# Prepare the columns
+subplots %>% 
+  mutate(
+    # Local coordinates before interpolation
+    up_left_x_raw = NA, up_left_y_raw = NA, 
+    up_right_x_raw = NA, up_right_y_raw = NA, 
+    down_right_x_raw = NA, down_right_y_raw = NA, 
+    down_left_x_raw = NA, down_left_y_raw = NA
+  ) -> subplots
+
+# Get the coordinates
+for (i in seq_len(nrow(subplots))) {
+  subplot <- subplots$subplot[i]
+  # Transition matrix
+  utm2local <- solve(local2utm(subplot, surveyor, subplots))
+  # Relative UTM coordinates
+  # substract the coordinates of the origin to that of all points 
+  # to get relative coordinates
+  # do.call transforms the obtained list into a vector
+  do.call('c', subplots[i, 6:13] - rep(subplots[i, 12:13], 4)) %>% 
+    # Make a matrix, columns are realtive X and Y
+    matrix(nrow = 4, ncol = 2, byrow = TRUE) -> utm_relative
+  # Multiply by the transition matrix
+  utm2local %*% t(utm_relative) %>% 
+    # Make a vector and save it into subplots
+    as.vector() ->
+    subplots[i, 14:21]
+}
+```
+ 
+L'orthogonalité entre abscisse et ordonnée des sous-parcelles est vérifiée par la nullité du produit scalaire des vecteurs constitués par les bordures bas et gauche des sous-parcelles.
+
+```{r}
+subplots %>% 
+  mutate(scal_prod = up_left_x_raw * down_left_x_raw + up_left_y_raw * down_right_y_raw) %>% 
+  select(subplot, scal_prod)
+```
+
 # Position des quadrats
 
 ## Fonction de triangulation
@@ -107,11 +288,6 @@ next_point(x_left, y_left, x_down, y_down, d_left, d_down)
 
 ## Placement des quadrats
 
-Les seules hypothèses retenues sont que:
-
-- les limites sud et ouest des hectares sont rectilignes,
-- Les distances mesurées au laser sont exactes.
-
 Le tableau des mesures contient trois colonnes pour décrire la position des angles des quadrats: `plot` pour l'hectare, `point_x` et `point_y` pour le numéro du point, de (0, 0) pour le coin inférieur gauche à (10, 10) pour le coin supérieur droit.
 
 Pour chaque point, la distance à son voisin de gauche (`y` identique) et du bas (`x` identique), mesurées sur le terrain, sont dans les colonnes `d_left` et `d_down`.
@@ -121,58 +297,55 @@ Le code suivant:
 - lit le tableau des mesures et prépare deux colonnes supplémentaires, `x` et `y`, pour y placer les coordonnées à calculer,
 
 ```{r}
-library("tidyverse")
-
 # data
-read_csv2("data/Piquets_Paracou13_18_23_24.csv") %>% 
+read_xlsx("data/plots.xlsx", sheet = "quadrats") %>% 
   # Add columns for the correct coordinates
-  mutate(x = 0, y = 0) -> the_quadrats
+  mutate(x = 0, y = 0) -> quadrats
 ```
 
 - ajoute les coins inférieurs gauche (0, 0),
 
 ```{r}
 # Add points (0,0) to plots
-for (plot_number in unique(the_quadrats$plot)) {
-  the_quadrats %>% 
+for (subplot_number in unique(quadrats$subplot)) {
+  quadrats %>% 
     add_row(
-      plot = plot_number,
+      subplot = subplot_number,
       point_x = 0,
       point_y = 0,
       x = 0,
       y = 0
-    ) -> the_quadrats
+    ) -> quadrats
 }
-
 ```
 
-- trie les données et transforme le tibble en dataframe pour que les extractions futures, comme `the_quadrats[i, "x"]`, soient des scalaires et non des tibbles,
+- trie les données et transforme le tibble en dataframe pour que les extractions futures, comme `quadrats[i, "x"]`, soient des scalaires et non des tibbles,
 
 ```{r}
 # Sort so that the next point can rely on previous ones
-the_quadrats %>% 
-  arrange(plot, point_x, point_y) %>% 
-  as.data.frame() -> the_quadrats
+quadrats %>% 
+  arrange(subplot, point_x, point_y) %>% 
+  as.data.frame() -> quadrats
 ```
 
 - calcule les coordonnées des points situés sur les bords gauche et bas des hectares par simple cumul des distances mesurées depuis l'origine,
 
 ```{r}
 # Deal with edges: cumulative sum of distances from the origin
-for (plot_number in unique(the_quadrats$plot)) {
+for (plot_number in unique(quadrats$subplot)) {
   is_left_edge <- 
-    the_quadrats$plot == plot_number &
-    the_quadrats$point_x == 0 &
-    the_quadrats$point_y != 0
-  the_quadrats[is_left_edge, "y"] <- cumsum(
-    the_quadrats[is_left_edge, "d_down"]
+    quadrats$subplot == plot_number &
+    quadrats$point_x == 0 &
+    quadrats$point_y != 0
+  quadrats[is_left_edge, "y"] <- cumsum(
+    quadrats[is_left_edge, "d_down"]
   )
   is_down_edge <- 
-    the_quadrats$plot == plot_number &
-    the_quadrats$point_x != 0 &
-    the_quadrats$point_y == 0
-  the_quadrats[is_down_edge, "x"] <- cumsum(
-    the_quadrats[is_down_edge, "d_left"]
+    quadrats$subplot == plot_number &
+    quadrats$point_x != 0 &
+    quadrats$point_y == 0
+  quadrats[is_down_edge, "x"] <- cumsum(
+    quadrats[is_down_edge, "d_left"]
   )
 }
 ```
@@ -181,61 +354,61 @@ for (plot_number in unique(the_quadrats$plot)) {
 
 ```{r}
 # Compute the positions of the points
-for (i in seq_len(nrow(the_quadrats))) {
+for (i in seq_len(nrow(quadrats))) {
   # Ignore the edges
-  if (the_quadrats[i, "point_x"] != 0 & the_quadrats[i, "point_y"] != 0) {
-    x_left = the_quadrats[
-      the_quadrats$plot == the_quadrats[i, "plot"] &
-        the_quadrats$point_x == max(the_quadrats[i, "point_x"] - 1, 0) &
-        the_quadrats$point_y == the_quadrats[i, "point_y"],
+  if (quadrats[i, "point_x"] != 0 & quadrats[i, "point_y"] != 0) {
+    x_left = quadrats[
+      quadrats$subplot == quadrats[i, "subplot"] &
+        quadrats$point_x == max(quadrats[i, "point_x"] - 1, 0) &
+        quadrats$point_y == quadrats[i, "point_y"],
       "x"
     ]
-    y_left = the_quadrats[
-      the_quadrats$plot == the_quadrats[i, "plot"] &
-        the_quadrats$point_x == max(the_quadrats[i, "point_x"] - 1, 0) &
-        the_quadrats$point_y == the_quadrats[i, "point_y"],
+    y_left = quadrats[
+      quadrats$subplot == quadrats[i, "subplot"] &
+        quadrats$point_x == max(quadrats[i, "point_x"] - 1, 0) &
+        quadrats$point_y == quadrats[i, "point_y"],
       "y"
     ]
-    x_down = the_quadrats[
-      the_quadrats$plot == the_quadrats[i, "plot"] &
-        the_quadrats$point_x == the_quadrats[i, "point_x"] &
-        the_quadrats$point_y == max(the_quadrats[i, "point_y"] - 1, 0),
+    x_down = quadrats[
+      quadrats$subplot == quadrats[i, "subplot"] &
+        quadrats$point_x == quadrats[i, "point_x"] &
+        quadrats$point_y == max(quadrats[i, "point_y"] - 1, 0),
       "x"
     ]
-    y_down = the_quadrats[
-      the_quadrats$plot == the_quadrats[i, "plot"] &
-        the_quadrats$point_x == the_quadrats[i, "point_x"] &
-        the_quadrats$point_y == max(the_quadrats[i, "point_y"] - 1, 0),
+    y_down = quadrats[
+      quadrats$subplot == quadrats[i, "subplot"] &
+        quadrats$point_x == quadrats[i, "point_x"] &
+        quadrats$point_y == max(quadrats[i, "point_y"] - 1, 0),
       "y"
     ]
-    the_quadrats[i, c("x", "y")] <- 
+    quadrats[i, c("x", "y")] <- 
       c(x_left, y_down) +
       next_point(
         x_left = x_left,
         y_left = y_left,
         x_down = x_down,
         y_down = y_down,
-        d_left = the_quadrats[i, "d_left"],
-        d_down = the_quadrats[i, "d_down"]
+        d_left = quadrats[i, "d_left"],
+        d_down = quadrats[i, "d_down"]
       )
   }
 }
 ```
 
-Le dataframe `the_quadrats` contient maintenant la position des quadrats.
+Le dataframe `quadrats` contient maintenant la position des quadrats.
 
 Figure:
 ```{r}
-the_quadrats %>% 
-  ggplot(aes(x = x, y = y, color = as.factor(plot))) +
+quadrats %>% 
+  ggplot(aes(x = x, y = y, color = as.factor(subplot))) +
   geom_point() +
   scale_color_discrete() +
   scale_x_continuous(breaks = (0:10) * 10) +
   scale_y_continuous(breaks = (0:10) * 10) +
   coord_fixed() +
   theme(axis.text.x = element_text(angle = 90)) +
-  labs(color = "Plot") +
-  facet_grid(~ plot)
+  labs(color = "subplot") +
+  facet_grid(~ subplot)
 ```
 
 
