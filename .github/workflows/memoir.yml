@@ -29,7 +29,7 @@ jobs:
         env:
           GITHUB_PAT: ${{ secrets.GH_PAT }}
         run: |
-          install.packages(c("tidyverse", "ggspatial", "readxl", "sf"))
+          install.packages(c("tidyverse", "ggspatial", "readxl", "sf", "terra"))
           lapply(list.files(pattern = "*.Rmd"), function(file) rmarkdown::render(file, "all"))
           memoiR::build_githubpages()
         shell: Rscript {0}
