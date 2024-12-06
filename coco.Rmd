@@ -156,7 +156,7 @@ Pour cela:
 
 # Coordonnées locales des sous-parcelles
 
-Les sous-parcelles doivent être projetées dans leur système de coordonnées locales: le point en bas à gauche est l’origine du repère.
+Les sous-parcelles doivent être projetées dans leur système de coordonnées locales: le point en bas à gauche est l'origine du repère.
 
 Le passage des coordonnées locales aux coordonnées UTM est un changement de base (selon les coordonnées des vecteurs unitaires en UTM) suivie d'une translation (selon la position du point d'origine de la sous-parcelle).
 
@@ -238,10 +238,10 @@ subplots %>%
 subplots %>% 
   mutate(
     # Local coordinates before interpolation
-    up_left_x_raw = NA, up_left_y_raw = NA, 
-    up_right_x_raw = NA, up_right_y_raw = NA, 
-    down_right_x_raw = NA, down_right_y_raw = NA, 
-    down_left_x_raw = NA, down_left_y_raw = NA
+    up_left_x_field = NA, up_left_y_field = NA, 
+    up_right_x_field = NA, up_right_y_field = NA, 
+    down_right_x_field = NA, down_right_y_field = NA, 
+    down_left_x_field = NA, down_left_y_field = NA
   ) -> subplots
 
 # Get the coordinates
@@ -268,7 +268,7 @@ L'orthogonalité entre abscisse et ordonnée des sous-parcelles est vérifiée p
 
 ```{r}
 subplots %>% 
-  mutate(scal_prod = up_left_x_raw * down_left_x_raw + up_left_y_raw * down_right_y_raw) %>% 
+  mutate(scal_prod = up_left_x_field * down_left_x_field + up_left_y_field * down_right_y_field) %>% 
   select(subplot, scal_prod)
 ```
 
@@ -280,7 +280,7 @@ On connaît la position des points à gauche $(x_{left}, y_{left})$ et en dessou
 Par construction de l'algorithme, le point à placer est situé au dessus et à droite des points précédents.
 
 ```{r, echo=FALSE, out.width="100%"}
-knitr::include_graphics("images/interpolation.png")
+knitr::include_graphics("images/triangulation.png")
 ```
 
 Par le théorème de Pythagore, on connaît:
@@ -494,9 +494,79 @@ quadrats %>%
 
 ## Interpolation
 
+Les piquets des quadrats doivent être repositionnés pour que la forme de chaque sous-parcelle issue du terrain corresponde à sa forme réelle, issue des mesures du géomètre, qui n'est pas exactement un carré. 
+Cette opération ne sert qu'à réconcilier les limites de la sous-parcelle sur le terrain (considérée comme un carré) et les données du géomètre.
+
+Les coordonnées des points doivent être interpolées pour que la valeur maximale de l'abscisse, pour une ordonnée donnée, corresponde aux mesures du géomètre.
+Le raisonnement est le même pour les ordonnées.
+
 ```{r, echo=FALSE, out.width="100%"}
-knitr::include_graphics("images/interpolation.pdf")
+knitr::include_graphics("images/interpolation.png")
 ```
+A condition que les limites du bas et de gauche de la sous-parcelle soient orthogonales, la valeur maximale de l'abscisse x, qui dépend de y, est donnée par
+$$x_{max} = x_{down,right} + y \times
+  \frac{x_{up,right} - x_{down,right}}{y_{up,right} - y_{down,right}}.$$
+
+De même,
+$$y_{max} = y_{up,left} + x \times
+  \frac{y_{up,right} - y_{up,left}}{x_{up,right} - x_{up,left}}.$$
+
+Les coordonnées interpolées sont
+$$x = x_0 + \frac{x_{max}}{x_M}$$
+et
+$$y = y_0 + \frac{y_{max}}{y_M}$$
+où $(x_0, y_0)$ sont les coordonnées du point avant interpolation et $x_M$ et $y_M$ les valeurs maximales assumées pendant les mesures de terrain, ici 100 mètres.
+
+
+Application aux quadrats:
+
+```{r}
+# Theoretical subplot size
+x_M <- 100
+y_M <- 100
+quadrats %>% 
+  # Rename raw x and y columns
+  rename(x_0 = x, y_0 = y) %>% 
+  # Join the subplot coordinates
+  left_join(subplots) %>% 
+  mutate(
+    x = x_0 * (
+      down_right_x_field + 
+        y_0 * (up_right_x_field - down_right_x_field) / 
+        (up_right_y_field - down_right_y_field)
+      ) / x_M,
+    y = y_0 * (
+      up_left_y_field + 
+        y_0 * (up_right_y_field - up_left_y_field) / 
+        (up_right_x_field - up_left_x_field)
+      ) / y_M,
+  ) -> quadrats
+```
+
+Les coordonnées UTM des quadrats sont recalculées:
+
+```{r}
+# Prepare the columns
+quadrats$x_utm <- quadrats$y_utm <- NA
+# Project quadrats to UTM
+for (subplot in unique(quadrats$subplot)) {
+  # Points of the subplot. Rows are x and y
+  xy_local <- t(as.matrix(quadrats[quadrats$subplot == subplot, c("x", "y")]))
+  # Apply the rotation matrix and add the coordinates of the origin of the plot
+  xy_utm <- t(local2utm(subplot, surveyor, subplots) %*% xy_local) + 
+    quadrats[quadrats$subplot == subplot, c("down_left_x_utm", "down_left_y_utm")]
+  # Save the coordinates
+  quadrats[quadrats$subplot == subplot, c("x_utm", "y_utm")] <- xy_utm
+}
+
+# Map
+ggplot(quadrats, aes(x = x_utm, y = y_utm, color = as.factor(subplot))) +
+  geom_point() + 
+  coord_fixed() +
+  labs(color = "Subplot", x = "UTM x", y = "UTM y")
+
+```
+
 
 
 
