@@ -280,7 +280,7 @@ On connaît la position des points à gauche $(x_{left}, y_{left})$ et en dessou
 Par construction de l'algorithme, le point à placer est situé au dessus et à droite des points précédents.
 
 ```{r, echo=FALSE, out.width="100%"}
-knitr::include_graphics("images/trigonometry.png")
+knitr::include_graphics("images/interpolation.png")
 ```
 
 Par le théorème de Pythagore, on connaît:
@@ -492,10 +492,11 @@ quadrats %>%
   facet_wrap(~ subplot, nrow = 2)
 ```
 
+## Interpolation
 
-
-
-
+```{r, echo=FALSE, out.width="100%"}
+knitr::include_graphics("images/interpolation.pdf")
+```
 
 
 
