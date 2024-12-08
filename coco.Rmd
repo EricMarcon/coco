@@ -568,8 +568,135 @@ ggplot(quadrats, aes(x = x_utm, y = y_utm, color = as.factor(subplot))) +
 ```
 
 
+# Interpolation des arbres dans les quadrats
+
+La position des arbres a été estimée relativement aux bords de chaque quadrat.
+Elle doit être interpolée pour que les coordonnées corrigées soient cohérentes avec la forme du quadrat.
+La méthode d'interpolation précédente nécessite que les axes du repère soient orthogonaux, ce qui n'est pas le cas des quadrats.
+Les quadrats doivent donc être redressés dans un premier temps par un changement de repère.
+L'interpolation a lieu dans les quadrats redressés, avant de leur rendre leur forme par une transformation inverse.
 
 
+```{r}
+read.csv2("data/trees.csv") %>% 
+  # Homogenize the column names
+  rename(
+    subplot = "Subplot",
+    point_x = "Quadra.nb.X",
+    point_y = "Quadra.nb.Y",
+    x_field = "Dist.X",
+    y_field = "Dist.Y"
+  ) %>% 
+  drop_na() -> 
+  trees
+```
+
+Rectification et interpolation des arbres
+
+```{r}
+# Prepare columns
+trees[, c("x_quadrat", "y_quadrat")] <- NA
+x_M <- y_M <- 10
+for (subplot in unique(quadrats$subplot)) {
+  for (x_left in 0:9) {
+    for (y_down in 0:9) {
+      is_the_subplot <- quadrats$subplot == subplot
+      is_left <- quadrats$point_x == x_left
+      is_right <- quadrats$point_x == x_left + 1
+      is_down <- quadrats$point_y == y_down
+      is_up <- quadrats$point_y == y_down + 1
+      # Corners of the quadrat
+      x_ul <- quadrats[is_the_subplot & is_up & is_left, "x"]
+      x_ur <- quadrats[is_the_subplot & is_up & is_right, "x"]
+      x_dr <- quadrats[is_the_subplot & is_down & is_right, "x"]
+      x_dl <- quadrats[is_the_subplot & is_down & is_left, "x"]
+      y_ul <- quadrats[is_the_subplot & is_up & is_left, "y"]
+      y_ur <- quadrats[is_the_subplot & is_up & is_right, "y"]
+      y_dr <- quadrats[is_the_subplot & is_down & is_right, "y"]
+      y_dl <- quadrats[is_the_subplot & is_down & is_left, "y"]
+      # Down edge
+      i_dx <- x_dr - x_dl
+      i_dy <- y_dr - y_dl
+      i_length <- sqrt(i_dx^2 + i_dy^2)
+      # Unit vector
+      i <- c(i_dx, i_dy) / i_length
+      # Left edge
+      j_dx <- x_ul - x_dl
+      j_dy <- y_ul - y_dl
+      j_length <- sqrt(j_dx^2 + j_dy^2)
+      # Unit vector
+      j <- c(j_dx, j_dy) / j_length
+      # Rectification matrix
+      field2ortho <- cbind(i, j)
+      # Tree coordinates in the orthogonal system
+      is_in_quadrat <- trees$subplot == subplot &
+        trees$point_x == x_left & trees$point_y == y_down
+      field2ortho %*% 
+        t(as.matrix(trees[is_in_quadrat, c("x_field", "y_field")])) %>% 
+        # Transpose to have 2 columns rather than 2 rows
+        t() %>% 
+        as.data.frame() %>% 
+        rename(x_0 = V1, y_0 = V2) %>% 
+        # Interpolate
+        mutate(
+          x_ortho = x_0 * ((x_dr - x_dl) + 
+            y_0 * (x_ur - x_dr) / (y_ur - y_dr)) / x_M,
+          y_ortho = y_0 * ((y_ul - y_dl) + 
+            x_0 * (y_ur - y_ul) / (x_ur - x_ul)) / y_M,
+        ) -> xy_ortho
+      # Reproject to the field coordinates 
+      trees[is_in_quadrat, c("x_quadrat", "y_quadrat")] <- t(
+        solve(field2ortho) %*% t(as.matrix(xy_ortho[, c("x_ortho", "y_ortho")]))
+      )
+    }
+  } 
+}
+```
+
+Coordonnées dans la sous-parcelle
+
+```{r}
+trees %>% 
+  left_join(
+    quadrats %>% 
+      # Get the coordinates of the origin of the quadrats and 
+      # the coordinates of the corners of the quadrats
+      select(subplot, point_x, point_y, down_left_x_utm, down_left_y_utm, x, y),
+      by = c("subplot", "point_x", "point_y")
+  ) %>% 
+  # Coordinates of the trees in the quadrat coordinates
+  mutate(x = x_quadrat + x, y = y_quadrat + y) -> trees
+```
+
+Coordonnées UTM
+
+```{r}
+# Prepare the columns
+trees$x_utm <- trees$y_utm <- NA
+# Project quadrats to UTM
+for (subplot in unique(trees$subplot)) {
+  is_in_subplot <- trees$subplot == subplot
+  # Points of the subplot. Rows are x and y
+  xy_local <- t(as.matrix(trees[is_in_subplot, c("x", "y")]))
+  # Apply the rotation matrix. 
+  # UTM coordinates are relative to the origin of the subplot
+  xy_utm <- t(local2utm(subplot, surveyor, subplots) %*% xy_local)
+  # Save the coordinates
+  trees[is_in_subplot, c("x_utm", "y_utm")] <- xy_utm
+}
+# Add the origins of the subplots
+trees %>% 
+  mutate(
+    x_utm = x_utm + down_left_x_utm, 
+    y_utm = y_utm + down_left_y_utm
+  ) -> trees
+
+# Map
+ggplot(trees, aes(x = x_utm, y = y_utm, color = as.factor(subplot))) +
+  geom_point(size = 0.3) + 
+  coord_fixed() +
+  labs(color = "Subplot", x = "UTM x", y = "UTM y")
+```
 
 
 `r if (!knitr:::is_latex_output()) '# References {-}'`
