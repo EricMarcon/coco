@@ -162,14 +162,17 @@ Le passage des coordonnées locales aux coordonnées UTM est un changement de ba
 
 ## Rotation
 
-La matrice de changement de base (des coordonnées locales aux coordonnées UTM) est calculée par la fonction suivante:
+La matrice de changement de base (des coordonnées locales aux coordonnées UTM) est constituée des coordonnées des vecteurs unitaires de la nouvelle base dans le repère de l'ancienne.
+
+la fonction `local2utm()` retourne cette matrice pour la sous-parcelle choisie.
 
 ```{r}
 local2utm <- function(subplot, surveyor, subplots) {
   # Find the points
-  is_origin <- (surveyor$point == subplots[subplots$subplot == subplot, "down_left"])
-  is_down_right <- (surveyor$point == subplots[subplots$subplot == subplot, "down_right"])
-  is_up_left <- (surveyor$point == subplots[subplots$subplot == subplot, "up_left"])
+  is_the_supbplot <- subplots$subplot == subplot
+  is_origin <- (surveyor$point == subplots[is_the_supbplot, "down_left"])
+  is_down_right <- (surveyor$point == subplots[is_the_supbplot, "down_right"])
+  is_up_left <- (surveyor$point == subplots[is_the_supbplot, "up_left"])
   
   # X-axis vector
   i_dx_utm <- surveyor[is_down_right, "x_utm"] - surveyor[is_origin, "x_utm"]
@@ -268,9 +271,15 @@ L'orthogonalité entre abscisse et ordonnée des sous-parcelles est vérifiée p
 
 ```{r}
 subplots %>% 
-  mutate(scal_prod = up_left_x_field * down_left_x_field + up_left_y_field * down_right_y_field) %>% 
-  select(subplot, scal_prod)
+  mutate(
+    scalar_product = up_left_x_field * down_left_x_field +
+      up_left_y_field * down_right_y_field
+  ) %>% 
+  select(subplot, scalar_product)
 ```
+
+Le dataframe `subplots` contient maintenant les coordonnées des sous-parcelles en UTM (`up_left_x_utm` et 7 autres) et dans le repère de terrain (`up_left_x_field` et 7 autres), qui sont proches de 0 ou 100.
+
 
 # Position des quadrats
 
@@ -475,9 +484,9 @@ for (i in seq_len(nrow(quadrats))) {
 }
 ```
 
-Le dataframe `quadrats` contient maintenant la position des quadrats.
+Le dataframe `quadrats` contient maintenant la position des quadrats, en coordonnées locales (`x` et `y`, comprises entre 0 et 100) et UTM (`x_utm` et `y_utm`).
 
-Figure:
+Carte des quadrats, en coordonnées locales:
 
 ```{r}
 quadrats %>% 
@@ -551,12 +560,13 @@ quadrats$x_utm <- quadrats$y_utm <- NA
 # Project quadrats to UTM
 for (subplot in unique(quadrats$subplot)) {
   # Points of the subplot. Rows are x and y
-  xy_local <- t(as.matrix(quadrats[quadrats$subplot == subplot, c("x", "y")]))
+  is_in_subplot <- quadrats$subplot == subplot
+  xy_local <- t(as.matrix(quadrats[is_in_subplot, c("x", "y")]))
   # Apply the rotation matrix and add the coordinates of the origin of the plot
   xy_utm <- t(local2utm(subplot, surveyor, subplots) %*% xy_local) + 
-    quadrats[quadrats$subplot == subplot, c("down_left_x_utm", "down_left_y_utm")]
+    quadrats[is_in_subplot, c("down_left_x_utm", "down_left_y_utm")]
   # Save the coordinates
-  quadrats[quadrats$subplot == subplot, c("x_utm", "y_utm")] <- xy_utm
+  quadrats[is_in_subplot, c("x_utm", "y_utm")] <- xy_utm
 }
 
 # Map
@@ -591,7 +601,7 @@ read.csv2("data/trees.csv") %>%
   trees
 ```
 
-Rectification et interpolation des arbres
+Rectification et interpolation des arbres:
 
 ```{r}
 # Prepare columns
@@ -653,7 +663,7 @@ for (subplot in unique(quadrats$subplot)) {
 }
 ```
 
-Coordonnées dans la sous-parcelle
+Coordonnées dans la sous-parcelle:
 
 ```{r}
 trees %>% 
@@ -668,7 +678,7 @@ trees %>%
   mutate(x = x_quadrat + x, y = y_quadrat + y) -> trees
 ```
 
-Coordonnées UTM
+Coordonnées UTM:
 
 ```{r}
 # Prepare the columns
@@ -698,5 +708,4 @@ ggplot(trees, aes(x = x_utm, y = y_utm, color = as.factor(subplot))) +
   labs(color = "Subplot", x = "UTM x", y = "UTM y")
 ```
 
-
-`r if (!knitr:::is_latex_output()) '# References {-}'`
+Les coordonnées corrigées des arbres sont dans les colonnes `x` et `y` (repère local, valeurs comprises entre 0 et 100) et `x_utm` et `y_utm`.
