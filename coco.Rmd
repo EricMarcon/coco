@@ -68,7 +68,7 @@ knitr::opts_chunk$set(
   warning = FALSE,    # Show/Hide warnings
   message = FALSE,    # Show/Hide messages
   # Figure alignment and size
-  fig.align = 'center', out.width = '80%',
+  fig.align = 'center', out.width = '100%',
   # Graphic devices (ragg_png is better than standard png)
   dev = c("ragg_png", "pdf"),
   # Code chunk format
@@ -149,7 +149,7 @@ Pour cela:
 2. Les quadrats doivent être repositionnés dans chaque sous-parcelle, sur la base des hypothèses suivantes:
     - les limites basse et gauche des sous-parcelles parcourues sur le terrain pour y placer les quadrats sont rectilignes,
     - elles ne sont pas forcément orthogonales: l'angle précis de la base du repère est donné par les mesures du géomètre,
-    - les distances mesurées au laser sont exactes, ce qui permet de calculer de proche en proche la position des points constituant les quadrats par triangulation, à partir de l'origine du repère de la sous-parcelle,
+    - les distances mesurées au laser sont exactes, ce qui permet de calculer de proche en proche la position des points constituant les quadrats par triangulation, à partir de l'origine du repère de la sous-parcelle.
 3. les points obtenus sont replacés dans les limites précises de chaque sous-parcelle par interpolation,
 4. enfin, les arbres sont repositionnés dans les limites précises de chaque quadrat par interpolation.
 
@@ -210,6 +210,7 @@ local2utm(13, surveyor, subplots) %>%
       surveyor[surveyor$point == "B.6", "y_utm"]
   )
 ```
+
 ## Coordonnées locales
 
  Les coordonnées locales des sommets des sous-parcelles sont calculées:
@@ -288,7 +289,7 @@ Le dataframe `subplots` contient maintenant les coordonnées des sous-parcelles 
 On connaît la position des points à gauche $(x_{left}, y_{left})$ et en dessous $(x_{down}, y_{down})$ du point à placer (à l'intersection des deux cercles), ainsi que les distances entre eux et le point à placer: $d_{left}$ et $d_{down}$.
 Par construction de l'algorithme, le point à placer est situé au dessus et à droite des points précédents.
 
-```{r, echo=FALSE, out.width="100%"}
+```{r, echo=FALSE}
 knitr::include_graphics("images/triangulation.png")
 ```
 
@@ -373,7 +374,6 @@ d_left <- 11
 d_down <- 10
 next_point(x_left, y_left, x_down, y_down, d_left, d_down) 
 ```
-
 
 ## Placement des quadrats
 
@@ -509,7 +509,7 @@ Cette opération ne sert qu'à réconcilier les limites de la sous-parcelle sur 
 Les coordonnées des points doivent être interpolées pour que la valeur maximale de l'abscisse, pour une ordonnée donnée, corresponde aux mesures du géomètre.
 Le raisonnement est le même pour les ordonnées.
 
-```{r, echo=FALSE, out.width="100%"}
+```{r, echo=FALSE}
 knitr::include_graphics("images/interpolation.png")
 ```
 A condition que les limites du bas et de gauche de la sous-parcelle soient orthogonales, la valeur maximale de l'abscisse x, qui dépend de y, est donnée par
@@ -521,9 +521,9 @@ $$y_{max} = y_{up,left} + x \times
   \frac{y_{up,right} - y_{up,left}}{x_{up,right} - x_{up,left}}.$$
 
 Les coordonnées interpolées sont
-$$x = x_0 + \frac{x_{max}}{x_M}$$
+$$x = x_0 \times \frac{x_{max}}{x_M}$$
 et
-$$y = y_0 + \frac{y_{max}}{y_M}$$
+$$y = y_0 \times \frac{y_{max}}{y_M}$$
 où $(x_0, y_0)$ sont les coordonnées du point avant interpolation et $x_M$ et $y_M$ les valeurs maximales assumées pendant les mesures de terrain, ici 100 mètres.
 
 
@@ -561,9 +561,9 @@ quadrats$x_utm <- quadrats$y_utm <- NA
 for (subplot in unique(quadrats$subplot)) {
   # Points of the subplot. Rows are x and y
   is_in_subplot <- quadrats$subplot == subplot
-  xy_local <- t(as.matrix(quadrats[is_in_subplot, c("x", "y")]))
+  xy_local <- as.matrix(quadrats[is_in_subplot, c("x", "y")])
   # Apply the rotation matrix and add the coordinates of the origin of the plot
-  xy_utm <- t(local2utm(subplot, surveyor, subplots) %*% xy_local) + 
+  xy_utm <- t(local2utm(subplot, surveyor, subplots) %*% t(xy_local)) + 
     quadrats[is_in_subplot, c("down_left_x_utm", "down_left_y_utm")]
   # Save the coordinates
   quadrats[is_in_subplot, c("x_utm", "y_utm")] <- xy_utm
@@ -578,14 +578,9 @@ ggplot(quadrats, aes(x = x_utm, y = y_utm, color = as.factor(subplot))) +
 ```
 
 
-# Interpolation des arbres dans les quadrats
+# Position des arbres
 
-La position des arbres a été estimée relativement aux bords de chaque quadrat.
-Elle doit être interpolée pour que les coordonnées corrigées soient cohérentes avec la forme du quadrat.
-La méthode d'interpolation précédente nécessite que les axes du repère soient orthogonaux, ce qui n'est pas le cas des quadrats.
-Les quadrats doivent donc être redressés dans un premier temps par un changement de repère.
-L'interpolation a lieu dans les quadrats redressés, avant de leur rendre leur forme par une transformation inverse.
-
+Les coordonnées de terrain des arbres sont mesurées dans chaque quadrat (valeurs comprises théoriquement entre 0 et 10m).
 
 ```{r}
 read.csv2("data/trees.csv") %>% 
@@ -601,69 +596,160 @@ read.csv2("data/trees.csv") %>%
   trees
 ```
 
-Rectification et interpolation des arbres:
+## Projection dans le repère des quadrats réels
+
+La position des arbres a été estimée relativement aux bords de chaque quadrat, en supposant que ce sont des carrés de 10m de côté.
+Leur forme réelle a été calculée à l'étape précédente. 
+Les arbres doivent être projetés dans le repère de chacun des quadrats réels.
+
+Les fonctions suivantes s'appliquent à chaque quadrat, défini par sa sous-parcelle et son numéro d'ordre, le couple `(point_x,point_y)` qui va de (0, 0) à (9,9).
+La matrice de projection de chaque quadrat de ses coordonnées de terrain dans le repère du quadrat réel est calculée par la fonction `ortho2real()`.
+Ses arguments sont les coordonnées des coins du quadrats calculées précédemment, à l'exception du coin supérieur droit, inutile.
+
+```{r}
+ortho2real <- function(x_ul, x_dr, x_dl, y_ul, y_dr, y_dl) {
+  # Down edge
+  i_dx <- x_dr - x_dl
+  i_dy <- y_dr - y_dl
+  i_length <- sqrt(i_dx^2 + i_dy^2)
+  # Unit vector
+  i <- c(i_dx, i_dy) / i_length
+  # Left edge
+  j_dx <- x_ul - x_dl
+  j_dy <- y_ul - y_dl
+  j_length <- sqrt(j_dx^2 + j_dy^2)
+  # Unit vector
+  j <- c(j_dx, j_dy) / j_length
+  # Projection matrix
+  return(cbind(i, j))
+}
+```
+
+La projection du repère orthonormé au repère du quadrat réel utilise la matrice inverse.
+
+
+## Interpolation des arbres dans les quadrats
+
+La méthode d'interpolation des coins des quadrats dans les sous-parcelles nécessitait que les axes du repère soient orthogonaux, ce qui n'est pas le cas des quadrats réels.
+La méthode est plus compliquée.
+
+```{r, echo=FALSE}
+knitr::include_graphics("images/interpolation2.png")
+```
+
+La valeur maximale de l'abscisse x, qui dépend de y, est donnée par
+$$x_{max} = x_{down,right} + (y - y_{down,right}) \times
+  \frac{x_{up,right} - x_{down,right}}{y_{up,right} - y_{down,right}}.$$
+
+La valeur minimale de l'abscisse est plus simple parce que les coordonnnées du point bas gauche sont (0,0):
+$$x_{min} = y \times \frac{x_{up,left}}{y_{up,left}}.$$
+
+L'étendue des abscisses pour $y$ donné est $x_{range} = x_{max} - x_{min}$.
+
+De même, l'étendue des ordonnées dépend de $x$ et est donnée par
+$$y_{max} = y_{up,left} + (x - y_{up,left}) \times
+  \frac{y_{up,left} - y_{up,right}}{x_{up,left} - x_{up,right}}.$$
+
+et
+$$y_{min} = x \times
+  \frac{y_{down,right}}{x_{down,right}}.$$
+
+
+Les coordonnées interpolées sont
+$$x = x_{min} + (x_0 - x_{min}) \times \frac{x_{range}}{x_M}$$
+et
+$$y = y_{min} + (y_0 - y_{min}) \times \frac{y_{range}}{y_M}$$
+où $(x_0, y_0)$ sont les coordonnées du point avant interpolation et $x_M$ et $y_M$ les valeurs maximales assumées pendant les mesures de terrain, ici 10 mètres.
+
+La fonction `trees_interpolated()` interpole la position des arbres dans les limites de chaque quadrat.
+Elle projette les arbres dans le repère produit par `ortho2real()`.
+La position des arbres est alors interpolée.
+
+```{r}
+trees_interpolated <- function(
+    subplot, 
+    x_left, 
+    y_down, 
+    x_M,
+    y_M,
+    quadrats,
+    trees_in_quadrat) {
+  # Indicators to simplify the code later
+  is_the_subplot <- quadrats$subplot == subplot
+  is_left <- quadrats$point_x == x_left
+  is_right <- quadrats$point_x == x_left + 1
+  is_down <- quadrats$point_y == y_down
+  is_up <- quadrats$point_y == y_down + 1
+  # Corners of the quadrat
+  x_ul <- quadrats[is_the_subplot & is_up & is_left, "x"]
+  x_ur <- quadrats[is_the_subplot & is_up & is_right, "x"]
+  x_dr <- quadrats[is_the_subplot & is_down & is_right, "x"]
+  x_dl <- quadrats[is_the_subplot & is_down & is_left, "x"]
+  y_ul <- quadrats[is_the_subplot & is_up & is_left, "y"]
+  y_ur <- quadrats[is_the_subplot & is_up & is_right, "y"]
+  y_dr <- quadrats[is_the_subplot & is_down & is_right, "y"]
+  y_dl <- quadrats[is_the_subplot & is_down & is_left, "y"]
+  # Project the trees into the real quadrat coordinate system
+  ortho2real(x_ul, x_dr, x_dl, y_ul, y_dr, y_dl) %*% 
+    t(as.matrix(trees_in_quadrat)) %>% 
+    # Transpose to have 2 columns rather than 2 rows
+    t() %>% 
+    # Transform the matrix into a dataframe
+    as.data.frame() %>% 
+    # Name the columns
+    rename(x_0 = V1, y_0 = V2) %>% 
+    # prepare interpolated colums
+    mutate(x = NA, y = NA) -> xy_quadrat
+  # Interpolate. Use local coordinates, i.e. down left is (0, 0)
+  x_ull <- x_ul - x_dl
+  x_url <- x_ur - x_dl
+  x_drl <- x_dr - x_dl
+  y_ull <- y_ul - y_dl
+  y_url <- y_ur - y_dl
+  y_drl <- y_dr - y_dl
+  for (i in seq_len(nrow(xy_quadrat))) {
+    x_max <- x_drl + (xy_quadrat[i, "y_0"] - y_drl) * (x_url - x_drl) / (y_url - y_drl)
+    x_min <- xy_quadrat[i, "y_0"] * (x_ull / y_ull)
+    xy_quadrat[i, "x"] <- x_min + (xy_quadrat[i, "x_0"] - x_min) * (x_max - x_min) / (x_M)
+    y_max <- y_ull + (xy_quadrat[i, "x_0"] - x_url) * (y_ull - y_url) / (x_ull - x_url)
+    y_min <- xy_quadrat[i, "x_0"] * (y_drl / x_drl)
+    xy_quadrat[i, "y"] <- y_min + (xy_quadrat[i, "y_0"] - y_min) * (y_max - y_min) / (y_M)
+  }
+  return(xy_quadrat[c("x", "y")])
+}
+```
+
+La fonction est appliquée à chaque quadrat:
 
 ```{r}
 # Prepare columns
 trees[, c("x_quadrat", "y_quadrat")] <- NA
 x_M <- y_M <- 10
+# Loop in the subplots
 for (subplot in unique(quadrats$subplot)) {
+  # Loop in the quadrats
   for (x_left in 0:9) {
     for (y_down in 0:9) {
-      is_the_subplot <- quadrats$subplot == subplot
-      is_left <- quadrats$point_x == x_left
-      is_right <- quadrats$point_x == x_left + 1
-      is_down <- quadrats$point_y == y_down
-      is_up <- quadrats$point_y == y_down + 1
-      # Corners of the quadrat
-      x_ul <- quadrats[is_the_subplot & is_up & is_left, "x"]
-      x_ur <- quadrats[is_the_subplot & is_up & is_right, "x"]
-      x_dr <- quadrats[is_the_subplot & is_down & is_right, "x"]
-      x_dl <- quadrats[is_the_subplot & is_down & is_left, "x"]
-      y_ul <- quadrats[is_the_subplot & is_up & is_left, "y"]
-      y_ur <- quadrats[is_the_subplot & is_up & is_right, "y"]
-      y_dr <- quadrats[is_the_subplot & is_down & is_right, "y"]
-      y_dl <- quadrats[is_the_subplot & is_down & is_left, "y"]
-      # Down edge
-      i_dx <- x_dr - x_dl
-      i_dy <- y_dr - y_dl
-      i_length <- sqrt(i_dx^2 + i_dy^2)
-      # Unit vector
-      i <- c(i_dx, i_dy) / i_length
-      # Left edge
-      j_dx <- x_ul - x_dl
-      j_dy <- y_ul - y_dl
-      j_length <- sqrt(j_dx^2 + j_dy^2)
-      # Unit vector
-      j <- c(j_dx, j_dy) / j_length
-      # Rectification matrix
-      field2ortho <- cbind(i, j)
-      # Tree coordinates in the orthogonal system
+      # Which trees?
       is_in_quadrat <- trees$subplot == subplot &
         trees$point_x == x_left & trees$point_y == y_down
-      field2ortho %*% 
-        t(as.matrix(trees[is_in_quadrat, c("x_field", "y_field")])) %>% 
-        # Transpose to have 2 columns rather than 2 rows
-        t() %>% 
-        as.data.frame() %>% 
-        rename(x_0 = V1, y_0 = V2) %>% 
-        # Interpolate
-        mutate(
-          x_ortho = x_0 * ((x_dr - x_dl) + 
-            y_0 * (x_ur - x_dr) / (y_ur - y_dr)) / x_M,
-          y_ortho = y_0 * ((y_ul - y_dl) + 
-            x_0 * (y_ur - y_ul) / (x_ur - x_ul)) / y_M,
-        ) -> xy_ortho
-      # Reproject to the field coordinates 
-      trees[is_in_quadrat, c("x_quadrat", "y_quadrat")] <- t(
-        solve(field2ortho) %*% t(as.matrix(xy_ortho[, c("x_ortho", "y_ortho")]))
+      # Compute the interpolated tree coordinates
+      trees[is_in_quadrat, c("x_quadrat", "y_quadrat")] <- trees_interpolated(
+        subplot, 
+        x_left, 
+        y_down, 
+        x_M,
+        y_M,
+        quadrats,
+        trees[is_in_quadrat, c("x_field", "y_field")]
       )
     }
   } 
 }
 ```
 
-Coordonnées dans la sous-parcelle:
+Les coordonnées des arbres sont relatives aux quadrats à ce stade.
+Il reste à les calculer dans le repère de chaque sous-parcelle.
 
 ```{r}
 trees %>% 
@@ -678,7 +764,39 @@ trees %>%
   mutate(x = x_quadrat + x, y = y_quadrat + y) -> trees
 ```
 
-Coordonnées UTM:
+Des cartes locales peuvent être produites, par exemple pour les quadrats du coin du bas à droite de la sous-parcelle 13:
+
+```{r}
+the_subplot <- 13
+x_min <- 70
+x_max <- 100
+y_min <- 0
+y_max <- 40
+trees %>% 
+  filter(
+    subplot == the_subplot &
+    point_x %in% (x_min %/% 10):((x_max - 1) %/% 10) &
+    point_y %in% (y_min %/% 10):((y_max - 1) %/% 10)
+  ) %>% 
+  mutate(quadrat = 10 * point_x + point_y) %>%
+  ggplot() +
+    geom_point(aes(x = x, y = y, color = as.factor(quadrat))) +
+    geom_point(
+      data = quadrats %>% 
+        filter(
+          subplot == the_subplot &
+          point_x %in% (x_min %/% 10):(x_max %/% 10) &
+          point_y %in% (y_min %/% 10):(y_max %/% 10)
+        ),
+      aes(x = x, y = y)
+    ) +
+    coord_fixed() +
+    labs(color = "Quadrat")
+```
+
+## Coordonnées UTM
+
+Finalement, les arbres doivent être projetés dans le repère UTM.
 
 ```{r}
 # Prepare the columns
