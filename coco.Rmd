@@ -689,6 +689,13 @@ trees_interpolated <- function(
   y_ur <- quadrats[is_the_subplot & is_up & is_right, "y"]
   y_dr <- quadrats[is_the_subplot & is_down & is_right, "y"]
   y_dl <- quadrats[is_the_subplot & is_down & is_left, "y"]
+  # For interpolation, local coordinates, i.e. down left is (0, 0)
+  x_ull <- x_ul - x_dl
+  x_url <- x_ur - x_dl
+  x_drl <- x_dr - x_dl
+  y_ull <- y_ul - y_dl
+  y_url <- y_ur - y_dl
+  y_drl <- y_dr - y_dl
   # Project the trees into the real quadrat coordinate system
   ortho2real(x_ul, x_dr, x_dl, y_ul, y_dr, y_dl) %*% 
     t(as.matrix(trees_in_quadrat)) %>% 
@@ -697,25 +704,18 @@ trees_interpolated <- function(
     # Transform the matrix into a dataframe
     as.data.frame() %>% 
     # Name the columns
-    rename(x_0 = V1, y_0 = V2) %>% 
-    # prepare interpolated colums
-    mutate(x = NA, y = NA) -> xy_quadrat
-  # Interpolate. Use local coordinates, i.e. down left is (0, 0)
-  x_ull <- x_ul - x_dl
-  x_url <- x_ur - x_dl
-  x_drl <- x_dr - x_dl
-  y_ull <- y_ul - y_dl
-  y_url <- y_ur - y_dl
-  y_drl <- y_dr - y_dl
-  for (i in seq_len(nrow(xy_quadrat))) {
-    x_max <- x_drl + (xy_quadrat[i, "y_0"] - y_drl) * (x_url - x_drl) / (y_url - y_drl)
-    x_min <- xy_quadrat[i, "y_0"] * (x_ull / y_ull)
-    xy_quadrat[i, "x"] <- x_min + (xy_quadrat[i, "x_0"] - x_min) * (x_max - x_min) / (x_M)
-    y_max <- y_ull + (xy_quadrat[i, "x_0"] - x_url) * (y_ull - y_url) / (x_ull - x_url)
-    y_min <- xy_quadrat[i, "x_0"] * (y_drl / x_drl)
-    xy_quadrat[i, "y"] <- y_min + (xy_quadrat[i, "y_0"] - y_min) * (y_max - y_min) / (y_M)
-  }
-  return(xy_quadrat[c("x", "y")])
+    rename(x_0 = V1, y_0 = V2) %>%
+    # Interpolate
+    mutate(
+      x_max = x_drl + (y_0 - y_drl) * (x_url - x_drl) / (y_url - y_drl),
+      x_min = y_0 * cos(atan(x_ull / y_ull)) * (x_ull / y_ull),
+      x = x_min + (x_0 - x_min) * (x_max - x_min) / (x_M),
+      y_max = y_ull + (x_0 - x_url) * (y_ull - y_url) / (x_ull - x_url),
+      y_min = x_0 * cos(atan(y_drl / x_drl)) * (y_drl / x_drl),
+      y = y_min + (y_0 - y_min) * (y_max - y_min) / (y_M)      
+    ) %>% 
+    select(x, y) %>% 
+    return()
 }
 ```
 
