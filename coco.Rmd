@@ -524,21 +524,33 @@ Les coordonnées interpolées sont
 $$x = x_0 \times \frac{x_{max}}{x_M}$$
 et
 $$y = y_0 \times \frac{y_{max}}{y_M}$$
-où $(x_0, y_0)$ sont les coordonnées du point avant interpolation et $x_M$ et $y_M$ les valeurs maximales assumées pendant les mesures de terrain, ici 100 mètres.
+où $(x_0, y_0)$ sont les coordonnées du point avant interpolation et $x_M$ et $y_M$ les valeurs maximales des mesures de terrain, théoriquement 100 mètres, mais connues plus précisément.
+Pour chaque piquet, $x_M$ est l'abscisse du piquet le plus à droite de la rangée de même ordonnée, et de même pour $y_M$.
 
 
 Application aux quadrats:
 
 ```{r}
-# Theoretical subplot size
-x_M <- 100
-y_M <- 100
 quadrats %>% 
   # Rename raw x and y columns
   rename(x_0 = x, y_0 = y) %>% 
   # Join the subplot coordinates
   left_join(subplots) %>% 
-  mutate(
+  # Prepare columns
+  mutate(x_M = NA, y_M = NA) -> quadrats
+
+# Loop to calculate x_M and y_M (can't be vectorized)
+for (i in seq_len(nrow(quadrats))) {
+  is_in_subplot <- quadrats$subplot == quadrats[i, "subplot"]
+  is_same_x <- quadrats$point_x == quadrats[i, "point_x"]
+  is_same_y <- quadrats$point_y == quadrats[i, "point_y"]
+  quadrats[i, "x_M"] <- max(quadrats$x_0[is_in_subplot & is_same_y])
+  quadrats[i, "y_M"] <- max(quadrats$y_0[is_in_subplot & is_same_x])
+}
+  
+# Interpolate
+quadrats %>% 
+ mutate(
     x = x_0 * (
       down_right_x_field + 
         y_0 * (up_right_x_field - down_right_x_field) / 
@@ -546,7 +558,7 @@ quadrats %>%
       ) / x_M,
     y = y_0 * (
       up_left_y_field + 
-        y_0 * (up_right_y_field - up_left_y_field) / 
+        x_0 * (up_right_y_field - up_left_y_field) / 
         (up_right_x_field - up_left_x_field)
       ) / y_M,
   ) -> quadrats
