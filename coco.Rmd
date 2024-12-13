@@ -843,7 +843,8 @@ trees_interpolated <- function(
   y_url <- y_ur - y_dl
   y_drl <- y_dr - y_dl
   # Compute x_M and y_M
-  xy_M <- ortho2real(x_ul, x_dr, x_dl, y_ul, y_dr, y_dl) %*% c(10, 10)
+  xy_M <- ortho2real(x_ul, x_dr, x_dl, y_ul, y_dr, y_dl) %*% 
+    c(x_M_field, y_M_field)
   # Project the trees into the real quadrat coordinate system
   ortho2real(x_ul, x_dr, x_dl, y_ul, y_dr, y_dl) %*% 
     t(as.matrix(trees_in_quadrat)) %>% 
