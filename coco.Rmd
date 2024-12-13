@@ -151,6 +151,7 @@ Pour cela:
     - elles ne sont pas forcément orthogonales: l'angle précis de la base du repère est donné par les mesures du géomètre,
     - les distances mesurées au laser sont exactes, ce qui permet de calculer de proche en proche la position des points constituant les quadrats par triangulation, à partir de l'origine du repère de la sous-parcelle.
 3. les points obtenus sont replacés dans les limites précises de chaque sous-parcelle par interpolation,
+4. les écarts éventuels entre les positions des points en bordure droite et haute de chaque sous-parcelle et gauche et basse de la sous-parcelle voisine sont doivent être corrigés parce que les piquets sont uniques. Les bordures gauche et basse sont considérées comme fiables.
 4. enfin, les arbres sont repositionnés dans les limites précises de chaque quadrat par interpolation.
 
 
@@ -213,9 +214,12 @@ local2utm(13, surveyor, subplots) %>%
 
 ## Coordonnées locales
 
- Les coordonnées locales des sommets des sous-parcelles sont calculées:
- 
+Les coordonnées locales des sommets des sous-parcelles sont calculées:
+
 ```{r}
+# Next column number, i.e. UMT coordinates
+col_utm_first <- ncol(subplots) + 1
+col_utm_last <- col_utm_first + 7
 # Get the UTM coordinates of the points
 subplots %>% 
   # add coordinates of point up_left
@@ -257,14 +261,18 @@ for (i in seq_len(nrow(subplots))) {
   # substract the coordinates of the origin to that of all points 
   # to get relative coordinates
   # do.call transforms the obtained list into a vector
-  do.call('c', subplots[i, 6:13] - rep(subplots[i, 12:13], 4)) %>% 
+  do.call(
+    'c', 
+    subplots[i, col_utm_first:col_utm_last] - 
+      rep(subplots[i, (col_utm_last - 1):col_utm_last], 4)
+  ) %>% 
     # Make a matrix, columns are realtive X and Y
     matrix(nrow = 4, ncol = 2, byrow = TRUE) -> utm_relative
   # Multiply by the transition matrix
   utm2local %*% t(utm_relative) %>% 
     # Make a vector and save it into subplots
     as.vector() ->
-    subplots[i, 14:21]
+    subplots[i, (col_utm_last + 1):(col_utm_last + 8)]
 }
 ```
  
@@ -550,7 +558,7 @@ for (i in seq_len(nrow(quadrats))) {
   
 # Interpolate
 quadrats %>% 
- mutate(
+  mutate(
     x = x_0 * (
       down_right_x_field + 
         y_0 * (up_right_x_field - down_right_x_field) / 
@@ -587,6 +595,123 @@ ggplot(quadrats, aes(x = x_utm, y = y_utm, color = as.factor(subplot))) +
   coord_fixed() +
   labs(color = "Subplot", x = "UTM x", y = "UTM y")
 
+```
+
+## Réconciliation des sous-parcelles
+
+Quand la position des piquets de la sous-parcelle à droite ou en haut de chaque sous-parcelle et connue, elle est plus fiable que celle des piquets en bordures droite et haute.
+La position des piquets est réconciliée par interpolation:
+
+- les piquets de la bordure droite sont déplacés à la positiion des piquets de la sosu-parcelle suivante à droite, si l'information est disponible (ex.: les piquets de la sous-parcelle 23 sont replacés à la position de ceux de la sous-parcelle 24).
+- les piquets de la bordure gauche ne sont pas modifiés,
+- les piquets intermédiaires subissent une fraction du déplacement du piquet de droite: 1/10 pour le deuxième piquet, ..., 9/10 pour le dixième.
+
+Les mêmes ajustements sont appliqués aux piquets en limite haute.
+
+```{r}
+# Edge point numbers
+right_edge <- up_edge <- 10
+
+# Which subplots can be corrected
+subplots %>% 
+  filter(!is.na(next_right)) %>% 
+  pull(subplot) -> to_correct_right
+subplots %>% 
+  filter(!is.na(next_up)) %>% 
+  pull(subplot) -> to_correct_up
+
+# Right edge correction
+quadrats %>% 
+  filter(
+    subplot %in% to_correct_right &
+      point_x == right_edge
+  ) %>% 
+  select(subplot, point_y, x_utm, y_utm) %>% 
+  # Get the next plot to the right
+  left_join(
+    subplots %>% 
+      select(subplot, next_right)
+  ) %>% 
+  # Get the coordinates of its left edge
+  left_join(
+    quadrats %>% 
+      rename(x_ref_utm = x_utm, y_ref_utm = y_utm) %>% 
+      filter(point_x == 0) %>% 
+      select(subplot, point_y, x_ref_utm, y_ref_utm) %>% 
+      rename(next_right = subplot)
+  ) %>% 
+  # Correction to apply
+  mutate(dx_utm = x_ref_utm - x_utm, dy_utm = y_ref_utm - y_utm) %>%
+  select(subplot, point_y, dx_utm, dy_utm) ->
+  reconcile_right
+# Apply the right-edge correction
+quadrats %>% 
+  # Get the correction
+  left_join(
+    quadrats %>% 
+      inner_join(reconcile_right) %>% 
+      # Corrected coordinates
+      mutate(
+        x_utm_right = x_utm + dx_utm * point_x / right_edge,
+        y_utm_right = y_utm + dy_utm * point_x / right_edge,
+      ) %>% 
+      select(subplot, point_x, point_y, x_utm_right, y_utm_right)    
+  ) %>% 
+  # Save the coordinates
+  mutate(
+    x_utm = ifelse(is.na(x_utm_right), x_utm, x_utm_right),
+    y_utm = ifelse(is.na(y_utm_right), y_utm, y_utm_right),
+  ) ->
+  quadrats
+
+# Top edge correction
+quadrats %>% 
+  filter(
+    subplot %in% to_correct_up &
+      point_y == up_edge
+  ) %>% 
+  select(subplot, point_x, x_utm, y_utm) %>% 
+  # Get the next plot up
+  left_join(
+    subplots %>% 
+      select(subplot, next_up)
+  ) %>% 
+  # Get the coordinates of its down edge
+  left_join(
+    quadrats %>% 
+      rename(x_ref_utm = x_utm, y_ref_utm = y_utm) %>% 
+      filter(point_y == 0) %>% 
+      select(subplot, point_x, x_ref_utm, y_ref_utm) %>% 
+      rename(next_up = subplot)
+  ) %>% 
+  # Correction to apply
+  mutate(dx_utm = x_ref_utm - x_utm, dy_utm = y_ref_utm - y_utm) %>%
+  select(subplot, point_x, dx_utm, dy_utm) ->
+  reconcile_up
+# Apply the right-edge correction
+quadrats %>% 
+  # Get the correction
+  left_join(
+    quadrats %>% 
+      inner_join(reconcile_up) %>% 
+      # Corrected coordinates
+      mutate(
+        x_utm_up = x_utm + dx_utm * point_y / up_edge,
+        y_utm_up = y_utm + dy_utm * point_y / up_edge,
+      ) %>% 
+      select(subplot, point_x, point_y, x_utm_up, y_utm_up)    
+  ) %>% 
+  # Save the coordinates
+  mutate(
+    x_utm = ifelse(is.na(x_utm_up), x_utm, x_utm_up),
+    y_utm = ifelse(is.na(y_utm_up), y_utm, y_utm_up),
+  ) -> quadrats
+
+# Map
+ggplot(quadrats, aes(x = x_utm, y = y_utm, color = as.factor(subplot))) +
+  geom_point() + 
+  coord_fixed() +
+  labs(color = "Subplot", x = "UTM x", y = "UTM y")
 ```
 
 
@@ -740,8 +865,8 @@ x_M <- y_M <- 10
 # Loop in the subplots
 for (subplot in unique(quadrats$subplot)) {
   # Loop in the quadrats
-  for (x_left in 0:9) {
-    for (y_down in 0:9) {
+  for (x_left in 0:(right_edge - 1)) {
+    for (y_down in 0:(up_edge - 1)) {
       # Which trees?
       is_in_quadrat <- trees$subplot == subplot &
         trees$point_x == x_left & trees$point_y == y_down
