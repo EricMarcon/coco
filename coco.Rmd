@@ -298,7 +298,7 @@ On connaît la position des points à gauche $(x_{left}, y_{left})$ et en dessou
 Par construction de l'algorithme, le point à placer est situé au dessus et à droite des points précédents.
 
 ```{r, echo=FALSE}
-knitr::include_graphics("images/triangulation.png")
+knitr::include_graphics("images/trigonometry_1.png")
 ```
 
 Par le théorème de Pythagore, on connaît:
@@ -511,14 +511,14 @@ quadrats %>%
 
 ## Interpolation
 
-Les piquets des quadrats doivent être repositionnés pour que la forme de chaque sous-parcelle issue du terrain corresponde à sa forme réelle, issue des mesures du géomètre, qui n'est pas exactement un carré. 
+Les piquets des quadrats doivent être repositionnés pour que la forme de chaque sous-parcelle issue du terrain (en rouge sur la figure suivante) corresponde à sa forme réelle (en bleu), issue des mesures du géomètre, qui n'est pas exactement un carré. 
 Cette opération ne sert qu'à réconcilier les limites de la sous-parcelle sur le terrain (considérée comme un carré) et les données du géomètre.
 
 Les coordonnées des points doivent être interpolées pour que la valeur maximale de l'abscisse, pour une ordonnée donnée, corresponde aux mesures du géomètre.
 Le raisonnement est le même pour les ordonnées.
 
 ```{r, echo=FALSE}
-knitr::include_graphics("images/interpolation.png")
+knitr::include_graphics("images/trigonometry_2.png")
 ```
 A condition que les limites du bas et de gauche de la sous-parcelle soient orthogonales, la valeur maximale de l'abscisse x, qui dépend de y, est donnée par
 $$x_{max} = x_{down,right} + y \times
@@ -727,7 +727,8 @@ read.csv2("data/trees.csv") %>%
     point_x = "Quadra.nb.X",
     point_y = "Quadra.nb.Y",
     x_field = "Dist.X",
-    y_field = "Dist.Y"
+    y_field = "Dist.Y",
+    diameter = "Diameter"
   ) %>% 
   drop_na() -> 
   trees
@@ -740,7 +741,7 @@ Leur forme réelle a été calculée à l'étape précédente.
 Les arbres doivent être projetés dans le repère de chacun des quadrats réels.
 
 Les fonctions suivantes s'appliquent à chaque quadrat, défini par sa sous-parcelle et son numéro d'ordre, le couple `(point_x,point_y)` qui va de (0, 0) à (9,9).
-La matrice de projection de chaque quadrat de ses coordonnées de terrain dans le repère du quadrat réel est calculée par la fonction `ortho2real()`.
+La matrice de projection de chaque quadrat de ses coordonnées de terrain (repère orthonormé, côtés de 10m) dans le repère du quadrat réel est calculée par la fonction `ortho2real()`.
 Ses arguments sont les coordonnées des coins du quadrats calculées précédemment, à l'exception du coin supérieur droit, inutile.
 
 ```{r}
@@ -770,8 +771,14 @@ La projection du repère orthonormé au repère du quadrat réel utilise la matr
 La méthode d'interpolation des coins des quadrats dans les sous-parcelles nécessitait que les axes du repère soient orthogonaux, ce qui n'est pas le cas des quadrats réels.
 La méthode est plus compliquée.
 
+La forme de référence est le quadrat réel (en bleu), qui est un quadrilatère.
+Le repère local du quadrat a été projeté dans celui du quadrat local: le quadrat théorique issu du terrain (en rouge) est un parallélogramme.
+
+L'interpolation consiste, en partant des bords gauche et bas, à ajuster les abscisses et ordonnées des arbres pour que ceux dont une coordonnée de terrain est maximale (10m) se retrouvent sur la bordure du quadrat réel.
+
+
 ```{r, echo=FALSE}
-knitr::include_graphics("images/interpolation2.png")
+knitr::include_graphics("images/trigonometry_3.png")
 ```
 
 La valeur maximale de l'abscisse x, qui dépend de y, est donnée par
@@ -796,7 +803,9 @@ Les coordonnées interpolées sont
 $$x = x_{min} + (x_0 - x_{min}) \times \frac{x_{range}}{x_M}$$
 et
 $$y = y_{min} + (y_0 - y_{min}) \times \frac{y_{range}}{y_M}$$
-où $(x_0, y_0)$ sont les coordonnées du point avant interpolation et $x_M$ et $y_M$ les valeurs maximales assumées pendant les mesures de terrain, ici 10 mètres.
+où $(x_0, y_0)$ sont les coordonnées du point avant interpolation.
+
+$x_M$ et $y_M$ les valeurs maximales assumées pendant les mesures de terrain, ici 10 mètres, projetées dans repère du quadrat réel.
 
 La fonction `trees_interpolated()` interpole la position des arbres dans les limites de chaque quadrat.
 Elle projette les arbres dans le repère produit par `ortho2real()`.
@@ -807,8 +816,8 @@ trees_interpolated <- function(
     subplot, 
     x_left, 
     y_down, 
-    x_M,
-    y_M,
+    x_M_field,
+    y_M_field,
     quadrats,
     trees_in_quadrat) {
   # Indicators to simplify the code later
@@ -833,6 +842,8 @@ trees_interpolated <- function(
   y_ull <- y_ul - y_dl
   y_url <- y_ur - y_dl
   y_drl <- y_dr - y_dl
+  # Compute x_M and y_M
+  xy_M <- ortho2real(x_ul, x_dr, x_dl, y_ul, y_dr, y_dl) %*% c(10, 10)
   # Project the trees into the real quadrat coordinate system
   ortho2real(x_ul, x_dr, x_dl, y_ul, y_dr, y_dl) %*% 
     t(as.matrix(trees_in_quadrat)) %>% 
@@ -846,10 +857,10 @@ trees_interpolated <- function(
     mutate(
       x_max = x_drl + (y_0 - y_drl) * (x_url - x_drl) / (y_url - y_drl),
       x_min = y_0 * cos(atan(x_ull / y_ull)) * (x_ull / y_ull),
-      x = x_min + (x_0 - x_min) * (x_max - x_min) / (x_M),
+      x = x_min + (x_0 - x_min) * (x_max - x_min) / (xy_M[1, 1]),
       y_max = y_ull + (x_0 - x_url) * (y_ull - y_url) / (x_ull - x_url),
       y_min = x_0 * cos(atan(y_drl / x_drl)) * (y_drl / x_drl),
-      y = y_min + (y_0 - y_min) * (y_max - y_min) / (y_M)      
+      y = y_min + (y_0 - y_min) * (y_max - y_min) / (xy_M[2, 1])      
     ) %>% 
     select(x, y) %>% 
     return()
@@ -861,7 +872,7 @@ La fonction est appliquée à chaque quadrat:
 ```{r}
 # Prepare columns
 trees[, c("x_quadrat", "y_quadrat")] <- NA
-x_M <- y_M <- 10
+x_M_field <- y_M_field <- 10
 # Loop in the subplots
 for (subplot in unique(quadrats$subplot)) {
   # Loop in the quadrats
@@ -875,8 +886,8 @@ for (subplot in unique(quadrats$subplot)) {
         subplot, 
         x_left, 
         y_down, 
-        x_M,
-        y_M,
+        x_M_field,
+        y_M_field,
         quadrats,
         trees[is_in_quadrat, c("x_field", "y_field")]
       )
@@ -957,9 +968,13 @@ trees %>%
   ) -> trees
 
 # Map
-ggplot(trees, aes(x = x_utm, y = y_utm, color = as.factor(subplot))) +
-  geom_point(size = 0.3) + 
+ggplot(
+  trees,
+  aes(x = x_utm, y = y_utm, color = as.factor(subplot), size = diameter)
+) +
+  geom_point() + 
   coord_fixed() +
+  scale_size_continuous(range = c(0.1, 1)) +
   labs(color = "Subplot", x = "UTM x", y = "UTM y")
 ```
 
