@@ -728,9 +728,9 @@ for (subplot in unique(quadrats$subplot)) {
       quadrats[is_in_subplot, c("down_left_x_utm", "down_left_y_utm")]
   )
   # Apply the rotation matrix and add the coordinates of the origin of the plot
-  xy <- t(solve(local2utm(subplot, surveyor, subplots)) %*% t(xy_utm))
+  xy_local <- t(solve(local2utm(subplot, surveyor, subplots)) %*% t(xy_utm))
   # Save the coordinates
-  quadrats[is_in_subplot, c("x", "y")] <- xy
+  quadrats[is_in_subplot, c("x", "y")] <- xy_local
 }
 
 # Map
@@ -804,7 +804,7 @@ La méthode d'interpolation des coins des quadrats dans les sous-parcelles néce
 La méthode est plus compliquée.
 
 La forme de référence est le quadrat réel (en bleu), qui est un quadrilatère.
-Le repère local du quadrat a été projeté dans celui du quadrat local: le quadrat théorique issu du terrain (en rouge) est un parallélogramme.
+Le repère local du quadrat a été projeté dans celui du quadrat local: le quadrat théorique issu du terrain (en rouge) est un losange de 10m de côté.
 
 L'interpolation consiste, en partant des bords gauche et bas, à ajuster les abscisses et ordonnées des arbres pour que ceux dont une coordonnée de terrain est maximale (10m) se retrouvent sur la bordure du quadrat réel.
 
