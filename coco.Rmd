@@ -294,7 +294,7 @@ Le dataframe `subplots` contient maintenant les coordonnées des sous-parcelles 
 
 ## Fonction de triangulation
 
-On connaît la position des points à gauche $(x_{left}, y_{left})$ et en dessous $(x_{down}, y_{down})$ du point à placer (à l'intersection des deux cercles), ainsi que les distances entre eux et le point à placer: $d_{left}$ et $d_{down}$.
+On connaît la position des points à gauche $(x_{left}, y_{left})$ et en dessous $(x_{down}, y_{down})$ du point à placer ("next", à l'intersection des deux cercles), ainsi que les distances entre eux et le point à placer: $d_{left}$ et $d_{down}$.
 Par construction de l'algorithme, le point à placer est situé au dessus et à droite des points précédents.
 
 ```{r, echo=FALSE}
@@ -608,6 +608,8 @@ La position des piquets est réconciliée par interpolation:
 
 Les mêmes ajustements sont appliqués aux piquets en limite haute.
 
+Ces corrections ont lieu en coordonnées UTM.
+
 ```{r}
 # Edge point numbers
 right_edge <- up_edge <- 10
@@ -712,6 +714,36 @@ ggplot(quadrats, aes(x = x_utm, y = y_utm, color = as.factor(subplot))) +
   geom_point() + 
   coord_fixed() +
   labs(color = "Subplot", x = "UTM x", y = "UTM y")
+```
+
+Les coordonnées locales des quadrats doivent être mises à jour:
+
+```{r}
+# Project UTM to quadrats
+for (subplot in unique(quadrats$subplot)) {
+  # Points of the subplot. Rows are x and y
+  is_in_subplot <- quadrats$subplot == subplot
+  xy_utm <- as.matrix(
+    quadrats[is_in_subplot, c("x_utm", "y_utm")] - 
+      quadrats[is_in_subplot, c("down_left_x_utm", "down_left_y_utm")]
+  )
+  # Apply the rotation matrix and add the coordinates of the origin of the plot
+  xy <- t(solve(local2utm(subplot, surveyor, subplots)) %*% t(xy_utm))
+  # Save the coordinates
+  quadrats[is_in_subplot, c("x", "y")] <- xy
+}
+
+# Map
+quadrats %>% 
+  ggplot(aes(x = x, y = y, color = as.factor(subplot))) +
+  geom_point() +
+  scale_color_discrete() +
+  scale_x_continuous(breaks = (0:10) * 10) +
+  scale_y_continuous(breaks = (0:10) * 10) +
+  coord_fixed() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  labs(color = "subplot") +
+  facet_wrap(~ subplot, nrow = 2)
 ```
 
 
