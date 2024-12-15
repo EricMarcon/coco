@@ -56,7 +56,7 @@ knitr::knit_hooks$set(chunk = function(x, options) {
 #| include: false
 ### Customized options for this document
 # Add necessary packages here
-Packages <- c("tidyverse", "ggspatial", "readxl", "sf", "terra")
+Packages <- c("tidyverse", "ggspatial", "readxl", "sf", "terra", "GoFKernel")
 # Install them
 InstallPackages(Packages)
 
@@ -1012,3 +1012,41 @@ ggplot(
 ```
 
 Les coordonnées corrigées des arbres sont dans les colonnes `x` et `y` (repère local, valeurs comprises entre 0 et 100) et `x_utm` et `y_utm`.
+
+# Effet des corrections
+
+Le déplacement des arbres relativement aux mesures brutes de terrain (dans chaque sous-parcelle, 10 fois le numéro du quadrat plus la position de l'arbre dans le quadrat) est de l'ordre d'un mètre.
+La figure suivante montre la densité de probabilité du déplacement en fonction de la sous-parcelle. 
+La courbe en pointillés rassemble tous les arbres.
+
+```{r}
+trees %>% 
+  mutate(
+    x_field_subplot = x_field + 10 * point_x,
+    y_field_subplot = y_field + 10 * point_y,
+    correction_dx = x - x_field_subplot,
+    correction_dy = y - y_field_subplot,
+    correction_d = sqrt(correction_dx^2 + correction_dy^2)
+  ) -> trees
+
+# Distribution
+trees %>% 
+  ggplot(aes(correction_d)) +
+  geom_density(aes(x = correction_d), bounds = c(0, Inf), lty = 2) +
+  geom_density(
+    aes(
+      x = correction_d, 
+      color = as.factor(subplot),
+      fill = as.factor(subplot)
+    ), 
+    bounds = c(0, Inf), 
+    alpha = 0.2
+  ) +
+  labs(
+    color = "Sous-parcelle", 
+    fill = "Sous-parcelle", 
+    x = "Déplacement", 
+    y = "Densité"
+  )
+```
+
