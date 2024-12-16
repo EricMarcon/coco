@@ -130,7 +130,7 @@ Les sous-parcelles ("subplots") sont définies par leurs quatre coins (haut-gauc
 read_xlsx("data/plots.xlsx", sheet = "subplots") %>% 
   as.data.frame() -> subplots
 # Example
-subplots[1:3, ]
+subplots[1:3, 1:4]
 ```
 
 Les quadrats de 10m sont marqués par des piquets.
@@ -161,7 +161,7 @@ Les sous-parcelles doivent être projetées dans leur système de coordonnées l
 
 Le passage des coordonnées locales aux coordonnées UTM est un changement de base (selon les coordonnées des vecteurs unitaires en UTM) suivie d'une translation (selon la position du point d'origine de la sous-parcelle).
 
-## Rotation
+## Changement de repère
 
 La matrice de changement de base (des coordonnées locales aux coordonnées UTM) est constituée des coordonnées des vecteurs unitaires de la nouvelle base dans le repère de l'ancienne.
 
