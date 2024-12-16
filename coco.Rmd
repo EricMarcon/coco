@@ -20,6 +20,7 @@ output:
   rmdformats::downcute:
     use_bookdown: yes
     lightbox: yes
+    pandoc_args: "--lua-filter=fr-nbsp.lua"
   bookdown::pdf_book:
     template: latex/template.tex
     citation_package: natbib
