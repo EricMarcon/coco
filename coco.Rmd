@@ -267,7 +267,7 @@ for (i in seq_len(nrow(subplots))) {
     subplots[i, col_utm_first:col_utm_last] - 
       rep(subplots[i, (col_utm_last - 1):col_utm_last], 4)
   ) %>% 
-    # Make a matrix, columns are realtive X and Y
+    # Make a matrix, columns are relative X and Y
     matrix(nrow = 4, ncol = 2, byrow = TRUE) -> utm_relative
   # Multiply by the transition matrix
   utm2local %*% t(utm_relative) %>% 
@@ -767,14 +767,14 @@ read.csv2("data/trees.csv") %>%
   trees
 ```
 
-## Projection dans le repère des quadrats réels
+## Projection dans les quadrats réels
 
 La position des arbres a été estimée relativement aux bords de chaque quadrat, en supposant que ce sont des carrés de 10m de côté.
 Leur forme réelle a été calculée à l'étape précédente. 
-Les arbres doivent être projetés dans le repère de chacun des quadrats réels.
+Les arbres doivent être projetés dans chacun des quadrats réels.
 
 Les fonctions suivantes s'appliquent à chaque quadrat, défini par sa sous-parcelle et son numéro d'ordre, le couple `(point_x,point_y)` qui va de (0, 0) à (9,9).
-La matrice de projection de chaque quadrat de ses coordonnées de terrain (repère orthonormé, côtés de 10m) dans le repère du quadrat réel est calculée par la fonction `ortho2real()`.
+La matrice de projection de chaque quadrat de ses coordonnées de terrain (repère orthonormé, côtés de 10m) dans le quadrat réel est calculée par la fonction `ortho2real()`.
 Ses arguments sont les coordonnées des coins du quadrats calculées précédemment, à l'exception du coin supérieur droit, inutile.
 
 ```{r}
@@ -796,16 +796,15 @@ ortho2real <- function(x_ul, x_dr, x_dl, y_ul, y_dr, y_dl) {
 }
 ```
 
-La projection du repère orthonormé au repère du quadrat réel utilise la matrice inverse.
-
 
 ## Interpolation des arbres dans les quadrats
 
 La méthode d'interpolation des coins des quadrats dans les sous-parcelles nécessitait que les axes du repère soient orthogonaux, ce qui n'est pas le cas des quadrats réels.
 La méthode est plus compliquée.
 
-La forme de référence est le quadrat réel (en bleu), qui est un quadrilatère.
-Le repère local du quadrat a été projeté dans celui du quadrat local: le quadrat théorique issu du terrain (en rouge) est un losange de 10m de côté.
+On se place dans le repère local de chaque sous-parcelle.
+La forme de référence est le quadrat réel (en bleu), qui est un quadrilatère: ses limites ont été calculées aux étapes précédentes.
+Le quadrat théorique issu du terrain (en rouge) est un losange de 10m de côté après projection dans le quadrat réel.
 
 L'interpolation consiste, en partant des bords gauche et bas, à ajuster les abscisses et ordonnées des arbres pour que ceux dont une coordonnée de terrain est maximale (10m) se retrouvent sur la bordure du quadrat réel.
 
@@ -838,11 +837,11 @@ et
 $$y = y_{min} + (y_0 - y_{min}) \times \frac{y_{range}}{y_M}$$
 où $(x_0, y_0)$ sont les coordonnées du point avant interpolation.
 
-$x_M$ et $y_M$ les valeurs maximales assumées pendant les mesures de terrain, ici 10 mètres, projetées dans repère du quadrat réel.
+$x_M$ et $y_M$ les valeurs maximales assumées pendant les mesures de terrain, ici 10 mètres, projetées dans le quadrat réel.
 
 La fonction `trees_interpolated()` interpole la position des arbres dans les limites de chaque quadrat.
-Elle projette les arbres dans le repère produit par `ortho2real()`.
-La position des arbres est alors interpolée.
+Elle projette dans un premier temps les arbres dans le quadrat réel avec `ortho2real()`.
+La position des arbres est ensuite interpolée.
 
 ```{r}
 trees_interpolated <- function(
