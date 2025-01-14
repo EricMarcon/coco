@@ -767,7 +767,8 @@ read.csv2("data/trees.csv") %>%
   trees
 ```
 
-## Projection dans les quadrats réels
+
+### Projection dans les quadrats réels
 
 La position des arbres a été estimée relativement aux bords de chaque quadrat, en supposant que ce sont des carrés de 10m de côté.
 Leur forme réelle a été calculée à l'étape précédente. 
@@ -797,16 +798,19 @@ ortho2real <- function(x_ul, x_dr, x_dl, y_ul, y_dr, y_dl) {
 ```
 
 
-## Interpolation des arbres dans les quadrats
+### Interpolation des arbres dans les quadrats
 
 La méthode d'interpolation des coins des quadrats dans les sous-parcelles nécessitait que les axes du repère soient orthogonaux, ce qui n'est pas le cas des quadrats réels.
 La méthode est plus compliquée.
 
 On se place dans le repère local de chaque sous-parcelle.
 La forme de référence est le quadrat réel (en bleu), qui est un quadrilatère: ses limites ont été calculées aux étapes précédentes.
-Le quadrat théorique issu du terrain (en rouge) est un losange de 10m de côté après projection dans le quadrat réel.
+Le quadrat théorique issu du terrain est un parallélogramme (en rouge) après projection dans le quadrat réel.
+Par construction de la projection, seul le coin supérieur droit ne se trouve pas à son emplacement réel.
 
 L'interpolation consiste, en partant des bords gauche et bas, à ajuster les abscisses et ordonnées des arbres pour que ceux dont une coordonnée de terrain est maximale (10m) se retrouvent sur la bordure du quadrat réel.
+Précisément, l'hypothèse est faite que les distances sont mesurées assez précisément à partir des bords gauche et bas des quadrats.
+Si des valeurs sont supérieures à 10m, la raison est probablement que le quadrat réel mesure plus de 10m de côté: les arbres devraient se trouver dans leur quadrat à la fin de toutes les corrections, sans forçage par la méthode d'interpolation.
 
 
 ```{r, echo=FALSE}
@@ -817,7 +821,7 @@ La valeur maximale de l'abscisse x, qui dépend de y, est donnée par
 $$x_{max} = x_{down,right} + (y - y_{down,right}) \times
   \frac{x_{up,right} - x_{down,right}}{y_{up,right} - y_{down,right}}.$$
 
-La valeur minimale de l'abscisse est plus simple parce que les coordonnnées du point bas gauche sont (0,0):
+La valeur minimale de l'abscisse est plus simple parce que les coordonnées du point bas gauche sont (0,0):
 $$x_{min} = y \times \frac{x_{up,left}}{y_{up,left}}.$$
 
 L'étendue des abscisses pour $y$ donné est $x_{range} = x_{max} - x_{min}$.
@@ -837,7 +841,7 @@ et
 $$y = y_{min} + (y_0 - y_{min}) \times \frac{y_{range}}{y_M}$$
 où $(x_0, y_0)$ sont les coordonnées du point avant interpolation.
 
-$x_M$ et $y_M$ les valeurs maximales assumées pendant les mesures de terrain, ici 10 mètres, projetées dans le quadrat réel.
+$x_M$ et $y_M$ les valeurs maximales assumées pendant les mesures de terrain, ici 10 mètres.
 
 La fonction `trees_interpolated()` interpole la position des arbres dans les limites de chaque quadrat.
 Elle projette dans un premier temps les arbres dans le quadrat réel avec `ortho2real()`.
@@ -867,16 +871,13 @@ trees_interpolated <- function(
   y_ur <- quadrats[is_the_subplot & is_up & is_right, "y"]
   y_dr <- quadrats[is_the_subplot & is_down & is_right, "y"]
   y_dl <- quadrats[is_the_subplot & is_down & is_left, "y"]
-  # For interpolation, local coordinates, i.e. down left is (0, 0)
+  # For interpolation: local coordinates, i.e. down left is (0, 0)
   x_ull <- x_ul - x_dl
   x_url <- x_ur - x_dl
   x_drl <- x_dr - x_dl
   y_ull <- y_ul - y_dl
   y_url <- y_ur - y_dl
   y_drl <- y_dr - y_dl
-  # Compute x_M and y_M
-  xy_M <- ortho2real(x_ul, x_dr, x_dl, y_ul, y_dr, y_dl) %*% 
-    c(x_M_field, y_M_field)
   # Project the trees into the real quadrat coordinate system
   ortho2real(x_ul, x_dr, x_dl, y_ul, y_dr, y_dl) %*% 
     t(as.matrix(trees_in_quadrat)) %>% 
@@ -890,10 +891,10 @@ trees_interpolated <- function(
     mutate(
       x_max = x_drl + (y_0 - y_drl) * (x_url - x_drl) / (y_url - y_drl),
       x_min = y_0 * cos(atan(x_ull / y_ull)) * (x_ull / y_ull),
-      x = x_min + (x_0 - x_min) * (x_max - x_min) / (xy_M[1, 1]),
+      x = x_min + (x_0 - x_min) * (x_max - x_min) / x_M_field,
       y_max = y_ull + (x_0 - x_url) * (y_ull - y_url) / (x_ull - x_url),
       y_min = x_0 * cos(atan(y_drl / x_drl)) * (y_drl / x_drl),
-      y = y_min + (y_0 - y_min) * (y_max - y_min) / (xy_M[2, 1])      
+      y = y_min + (y_0 - y_min) * (y_max - y_min) / y_M_field      
     ) %>% 
     select(x, y) %>% 
     return()
@@ -945,15 +946,11 @@ trees %>%
   mutate(x = x_quadrat + x, y = y_quadrat + y) -> trees
 ```
 
-Des cartes locales peuvent être produites, par exemple pour les quadrats du coin du bas à droite de la sous-parcelle 13:
+Des cartes locales peuvent être produites, par exemple pour les quadrats du coin du bas à gauche de la sous-parcelle 21:
 
 ```{r}
-the_subplot <- 13
-x_min <- 70
-x_max <- 100
-y_min <- 0
-y_max <- 40
-trees %>% 
+map_quadrats <- function(trees, the_subplot, x_min, x_max, y_min, y_max) {
+  trees %>% 
   filter(
     subplot == the_subplot &
     point_x %in% (x_min %/% 10):((x_max - 1) %/% 10) &
@@ -973,7 +970,17 @@ trees %>%
     ) +
     coord_fixed() +
     labs(color = "Quadrat")
+}
+
+map_quadrats(trees, the_subplot = 23, x_min = 0, x_max = 40, y_min = 0, y_max = 30)
 ```
+
+Les quadrats du coin du bas à droite de la sous-parcelle 13 sont les plus déformés, donc les plus corrigés:
+
+```{r}
+map_quadrats(trees, the_subplot = 13, x_min = 60, x_max = 100, y_min = 0, y_max = 40)
+```
+
 
 ## Coordonnées UTM
 
