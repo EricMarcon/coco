@@ -291,6 +291,7 @@ subplots %>%
 Le dataframe `subplots` contient maintenant les coordonnées des sous-parcelles en UTM (`up_left_x_utm` et 7 autres) et dans le repère de terrain (`up_left_x_field` et 7 autres), qui sont proches de 0 ou 100.
 
 
+
 # Position des quadrats
 
 ## Fonction de triangulation
@@ -388,6 +389,11 @@ next_point(x_left, y_left, x_down, y_down, d_left, d_down)
 
 Le tableau des mesures contient trois colonnes pour décrire la position des angles des quadrats: `plot` pour l'hectare, `point_x` et `point_y` pour le numéro du point, de (0, 0) pour le coin inférieur gauche à (10, 10) pour le coin supérieur droit.
 
+Les points situés sur les bordures basse et gauche de chaque sous-parcelle sont les plus fiables. 
+Ils seront utilisés pour corriger les bordures haute et droite des sous-parcelles voisines, sont la position calculée accumulera les erreurs.
+Ces données peuvent être mesurées sur le terrain indépendamment des arbres: dans ce cas, seules les distances entre les points des bordures sont dans le tableau de données.
+Les sous-parcelles correspondantes sont sans intérêt pour elles-mêmes ("dummy subplots"): elles ne contiennent pas tous les points délimitant les quadrats et aucun arbre mesuré.
+
 Pour chaque point, la distance à son voisin de gauche (`y` identique) et du bas (`x` identique), mesurées sur le terrain, sont dans les colonnes `d_left` et `d_down`.
 
 Le code suivant:
@@ -399,6 +405,21 @@ Le code suivant:
 read_xlsx("data/plots.xlsx", sheet = "quadrats") %>% 
   # Add columns for the correct coordinates
   mutate(x = 0, y = 0) -> quadrats
+# Edge point numbers
+right_edge <- up_edge <- 10
+# Quadrat size
+x_M_field <- y_M_field <- 10
+# List subplots measured in the field, i.e. with full data
+quadrats %>% 
+  group_by(subplot) %>% 
+  summarise(points_n = n()) %>% 
+  # 11 x 11 points to define quadrats, minus the origin
+  filter(points_n == (right_edge + 1) * (up_edge + 1) - 1) %>% 
+  pull(subplot) -> subplots_field
+# List dummy subplots, 
+# used to correct right or up edges of subplots measured in the field
+subplots_dummy <- setdiff(unique(quadrats$subplot), subplots_field)
+
 ```
 
 - ajoute les coins inférieurs gauche (0, 0),
@@ -435,16 +456,12 @@ for (plot_number in unique(quadrats$subplot)) {
     quadrats$subplot == plot_number &
     quadrats$point_x == 0 &
     quadrats$point_y != 0
-  quadrats[is_left_edge, "y"] <- cumsum(
-    quadrats[is_left_edge, "d_down"]
-  )
+  quadrats[is_left_edge, "y"] <- cumsum(quadrats[is_left_edge, "d_down"])
   is_down_edge <- 
     quadrats$subplot == plot_number &
     quadrats$point_x != 0 &
     quadrats$point_y == 0
-  quadrats[is_down_edge, "x"] <- cumsum(
-    quadrats[is_down_edge, "d_left"]
-  )
+  quadrats[is_down_edge, "x"] <- cumsum(quadrats[is_down_edge, "d_left"])
 }
 ```
 
@@ -556,6 +573,13 @@ for (i in seq_len(nrow(quadrats))) {
   quadrats[i, "x_M"] <- max(quadrats$x_0[is_in_subplot & is_same_y])
   quadrats[i, "y_M"] <- max(quadrats$y_0[is_in_subplot & is_same_x])
 }
+
+# Add dummy x_M and y_M for dummy subplots
+is_dummy <- quadrats$subplot %in% subplots_dummy
+is_x_M_missing <- quadrats$x_M == 0
+is_y_M_missing <- quadrats$y_M == 0
+quadrats[is_dummy & is_x_M_missing, "x_M"] <- 100
+quadrats[is_dummy & is_y_M_missing, "y_M"] <- 100
   
 # Interpolate
 quadrats %>% 
@@ -603,7 +627,7 @@ ggplot(quadrats, aes(x = x_utm, y = y_utm, color = as.factor(subplot))) +
 Quand la position des piquets de la sous-parcelle à droite ou en haut de chaque sous-parcelle et connue, elle est plus fiable que celle des piquets en bordures droite et haute.
 La position des piquets est réconciliée par interpolation:
 
-- les piquets de la bordure droite sont déplacés à la positiion des piquets de la sosu-parcelle suivante à droite, si l'information est disponible (ex.: les piquets de la sous-parcelle 23 sont replacés à la position de ceux de la sous-parcelle 24).
+- les piquets de la bordure droite sont déplacés à la position des piquets de la sous-parcelle suivante à droite, si l'information est disponible (ex.: les piquets de la sous-parcelle 23 sont replacés à la position de ceux de la sous-parcelle 24).
 - les piquets de la bordure gauche ne sont pas modifiés,
 - les piquets intermédiaires subissent une fraction du déplacement du piquet de droite: 1/10 pour le deuxième piquet, ..., 9/10 pour le dixième.
 
@@ -612,9 +636,6 @@ Les mêmes ajustements sont appliqués aux piquets en limite haute.
 Ces corrections ont lieu en coordonnées UTM.
 
 ```{r}
-# Edge point numbers
-right_edge <- up_edge <- 10
-
 # Which subplots can be corrected
 subplots %>% 
   filter(!is.na(next_right)) %>% 
@@ -841,7 +862,12 @@ et
 $$y = y_{min} + (y_0 - y_{min}) \times \frac{y_{range}}{y_M}$$
 où $(x_0, y_0)$ sont les coordonnées du point avant interpolation.
 
-$x_M$ et $y_M$ les valeurs maximales assumées pendant les mesures de terrain, ici 10 mètres.
+$x_M$ et $y_M$ sont calculés à partir des valeurs maximales assumées pendant les mesures de terrain, ici 10 mètres.
+Ces valeurs sont modifiées par la projection:
+$$x_M = x_{down,right} - x_{up,left} * \frac{y_{down,right}}{y_{up,left}}$$
+
+et 
+$$y_M = y_{up,left} - y_{down,right} * \frac{x_{up,left}}{x_{down,right}}.$$
 
 La fonction `trees_interpolated()` interpole la position des arbres dans les limites de chaque quadrat.
 Elle projette dans un premier temps les arbres dans le quadrat réel avec `ortho2real()`.
@@ -878,6 +904,9 @@ trees_interpolated <- function(
   y_ull <- y_ul - y_dl
   y_url <- y_ur - y_dl
   y_drl <- y_dr - y_dl
+  # Compute max theoretical values
+  x_M <- x_drl - x_ull * y_drl / y_ull
+  y_M <- y_ull - y_drl * x_ull / x_drl
   # Project the trees into the real quadrat coordinate system
   ortho2real(x_ul, x_dr, x_dl, y_ul, y_dr, y_dl) %*% 
     t(as.matrix(trees_in_quadrat)) %>% 
@@ -891,10 +920,10 @@ trees_interpolated <- function(
     mutate(
       x_max = x_drl + (y_0 - y_drl) * (x_url - x_drl) / (y_url - y_drl),
       x_min = y_0 * cos(atan(x_ull / y_ull)) * (x_ull / y_ull),
-      x = x_min + (x_0 - x_min) * (x_max - x_min) / x_M_field,
+      x = x_min + (x_0 - x_min) * (x_max - x_min) / x_M,
       y_max = y_ull + (x_0 - x_url) * (y_ull - y_url) / (x_ull - x_url),
       y_min = x_0 * cos(atan(y_drl / x_drl)) * (y_drl / x_drl),
-      y = y_min + (y_0 - y_min) * (y_max - y_min) / y_M_field      
+      y = y_min + (y_0 - y_min) * (y_max - y_min) / y_M      
     ) %>% 
     select(x, y) %>% 
     return()
@@ -906,9 +935,8 @@ La fonction est appliquée à chaque quadrat:
 ```{r}
 # Prepare columns
 trees[, c("x_quadrat", "y_quadrat")] <- NA
-x_M_field <- y_M_field <- 10
 # Loop in the subplots
-for (subplot in unique(quadrats$subplot)) {
+for (subplot in subplots_field) {
   # Loop in the quadrats
   for (x_left in 0:(right_edge - 1)) {
     for (y_down in 0:(up_edge - 1)) {
@@ -969,7 +997,8 @@ map_quadrats <- function(trees, the_subplot, x_min, x_max, y_min, y_max) {
       aes(x = x, y = y)
     ) +
     coord_fixed() +
-    labs(color = "Quadrat")
+    labs(color = "Quadrat") + 
+    scale_colour_brewer(palette = "Paired", type = "div")
 }
 
 map_quadrats(trees, the_subplot = 23, x_min = 0, x_max = 40, y_min = 0, y_max = 30)
@@ -978,7 +1007,7 @@ map_quadrats(trees, the_subplot = 23, x_min = 0, x_max = 40, y_min = 0, y_max = 
 Les quadrats du coin du bas à droite de la sous-parcelle 13 sont les plus déformés, donc les plus corrigés:
 
 ```{r}
-map_quadrats(trees, the_subplot = 13, x_min = 60, x_max = 100, y_min = 0, y_max = 40)
+map_quadrats(trees, the_subplot = 13, x_min = 60, x_max = 100, y_min = 0, y_max = 30)
 ```
 
 
