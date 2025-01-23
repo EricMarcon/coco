@@ -114,8 +114,9 @@ surveyor %>%
 
 # Map
 library("ggspatial")
+paracou_16 %>% 
 ggplot() +
-  geom_sf(data = st_cast(paracou_16)) +
+  geom_sf() +
   geom_sf_text(data = surveyor.sf, aes(label = point), col = "red") +
   ggtitle("Paracou P16 9ha - Surveyor's points") +
   annotation_scale(location = "br") +
