@@ -388,7 +388,7 @@ next_point(x_left, y_left, x_down, y_down, d_left, d_down)
 
 ## Placement des quadrats
 
-Le tableau des mesures contient trois colonnes pour décrire la position des angles des quadrats: `plot` pour l'hectare, `point_x` et `point_y` pour le numéro du point, de (0, 0) pour le coin inférieur gauche à (10, 10) pour le coin supérieur droit.
+Le tableau des mesures contient trois colonnes pour décrire la position des angles des quadrats: `plot` pour l'hectare, `quadrat_x` et `quadrat_y` pour le numéro du point, de (0, 0) pour le coin inférieur gauche à (10, 10) pour le coin supérieur droit.
 
 Les points situés sur les bordures basse et gauche de chaque sous-parcelle sont les plus fiables. 
 Ils seront utilisés pour corriger les bordures haute et droite des sous-parcelles voisines, sont la position calculée accumulera les erreurs.
@@ -404,6 +404,12 @@ Le code suivant:
 ```{r}
 # data
 read_xlsx("data/plots.xlsx", sheet = "quadrats") %>% 
+    # Homogenize the column names
+  rename(
+    subplot = "Subplot",
+    quadrat_x = "quadra.nb.X",
+    quadrat_y = "quadra.nb.Y"
+  ) %>% 
   # Add columns for the correct coordinates
   mutate(x = 0, y = 0) %>% 
   as.data.frame() -> quadrats
@@ -434,36 +440,36 @@ quadrats %>%
 # Add points (10, y) and (x, 10) to subplots
 for (subplot_number in unique(quadrats$subplot)) {
   is_in_subplot <- (quadrats$subplot == subplot_number)
-  for (x in unique(quadrats[is_in_subplot, "quadra.nb.X"])) {
+  for (x in unique(quadrats[is_in_subplot, "quadrat_x"])) {
     # Add the up-edge piquets
     quadrats_edges %>% 
       add_row(
         subplot = subplot_number,
-        quadra.nb.X = x,
-        quadra.nb.Y = up_edge,
+        quadrat_x = x,
+        quadrat_y = up_edge,
         # Distance to the next piquet is in the previous piquet data
         Q_lengthX = quadrats[
           is_in_subplot & 
-            (quadrats$quadra.nb.X == x) &
-            (quadrats$quadra.nb.Y == up_edge - 1), 
+            (quadrats$quadrat_x == x) &
+            (quadrats$quadrat_y == up_edge - 1), 
           "Q_lengthX1"
         ],
         x = 0, 
         y = 0
       ) -> quadrats_edges    
   }
-  for (y in unique(quadrats[is_in_subplot, "quadra.nb.Y"])) {
+  for (y in unique(quadrats[is_in_subplot, "quadrat_y"])) {
     # Add the right-edge piquet
     quadrats_edges %>% 
       add_row(
         subplot = subplot_number,
-        quadra.nb.X = right_edge,
-        quadra.nb.Y = y,
+        quadrat_x = right_edge,
+        quadrat_y = y,
         # Distance to the next piquet is in the previous piquet data
         Q_lengthY = quadrats[
           is_in_subplot & 
-            (quadrats$quadra.nb.X == right_edge - 1) &
-            (quadrats$quadra.nb.Y == y) , 
+            (quadrats$quadrat_x == right_edge - 1) &
+            (quadrats$quadrat_y == y) , 
           "Q_lengthY1"
         ],
         x = 0, 
@@ -474,8 +480,8 @@ for (subplot_number in unique(quadrats$subplot)) {
     # Add the top right corner
     add_row(
       subplot = subplot_number,
-      quadra.nb.X = right_edge,
-      quadra.nb.Y = up_edge,
+      quadrat_x = right_edge,
+      quadrat_y = up_edge,
       x = 0, 
       y = 0
     ) -> quadrats_edges    
@@ -483,7 +489,7 @@ for (subplot_number in unique(quadrats$subplot)) {
 # Add the new rows to quadrats and sort for readability
 quadrats %>% 
   bind_rows(quadrats_edges) %>% 
-  arrange(subplot, quadra.nb.X, quadra.nb.Y) -> quadrats  
+  arrange(subplot, quadrat_x, quadrat_y) -> quadrats  
 ```
 
 - calcule les coordonnées de tous les points par triangulation.
@@ -492,29 +498,29 @@ quadrats %>%
 # Compute the positions of the points
 for (i in seq_len(nrow(quadrats))) {
   # Compute x. Ignore edges
-  if (quadrats[i, "quadra.nb.X"] > 0) {
+  if (quadrats[i, "quadrat_x"] > 0) {
     # Previous piquet on the left
     is_piquet_left <- 
       # Same subplot
       (quadrats$subplot == quadrats$subplot[i]) &
       # Left column
-      (quadrats$quadra.nb.X == quadrats$quadra.nb.X[i] - 1) & 
+      (quadrats$quadrat_x == quadrats$quadrat_x[i] - 1) & 
       # Same row
-      (quadrats$quadra.nb.Y == quadrats$quadra.nb.Y[i])
+      (quadrats$quadrat_y == quadrats$quadrat_y[i])
     # Cumulate
     quadrats[i, "x"] <- 
       quadrats[is_piquet_left, "x"] + quadrats[is_piquet_left, "Q_lengthX"]
   }
   # Compute y. Ignore edges
-  if (quadrats[i, "quadra.nb.Y"] > 0) {
+  if (quadrats[i, "quadrat_y"] > 0) {
     # Previous piquet down
     is_piquet_below <- 
       # Same subplot
       (quadrats$subplot == quadrats$subplot[i]) &
       # Same column
-      (quadrats$quadra.nb.X == quadrats$quadra.nb.X[i]) & 
+      (quadrats$quadrat_x == quadrats$quadrat_x[i]) & 
       # Row below
-      (quadrats$quadra.nb.Y == quadrats$quadra.nb.Y[i] - 1)
+      (quadrats$quadrat_y == quadrats$quadrat_y[i] - 1)
     # Cumulate
     quadrats[i, "y"] <- 
       quadrats[is_piquet_below, "y"] + quadrats[is_piquet_below, "Q_lengthY"]
@@ -580,8 +586,8 @@ quadrats %>%
 # Loop to calculate x_M and y_M (can't be vectorized)
 for (i in seq_len(nrow(quadrats))) {
   is_in_subplot <- quadrats$subplot == quadrats[i, "subplot"]
-  is_same_x <- quadrats$point_x == quadrats[i, "point_x"]
-  is_same_y <- quadrats$point_y == quadrats[i, "point_y"]
+  is_same_x <- quadrats$quadrat_x == quadrats[i, "quadrat_x"]
+  is_same_y <- quadrats$quadrat_y == quadrats[i, "quadrat_y"]
   quadrats[i, "x_M"] <- max(quadrats$x_0[is_in_subplot & is_same_y])
   quadrats[i, "y_M"] <- max(quadrats$y_0[is_in_subplot & is_same_x])
 }
@@ -660,9 +666,9 @@ subplots %>%
 quadrats %>% 
   filter(
     subplot %in% to_correct_right &
-      point_x == right_edge
+      quadrat_x == right_edge
   ) %>% 
-  select(subplot, point_y, x_utm, y_utm) %>% 
+  select(subplot, quadrat_y, x_utm, y_utm) %>% 
   # Get the next plot to the right
   left_join(
     subplots %>% 
@@ -672,13 +678,13 @@ quadrats %>%
   left_join(
     quadrats %>% 
       rename(x_ref_utm = x_utm, y_ref_utm = y_utm) %>% 
-      filter(point_x == 0) %>% 
-      select(subplot, point_y, x_ref_utm, y_ref_utm) %>% 
+      filter(quadrat_x == 0) %>% 
+      select(subplot, quadrat_y, x_ref_utm, y_ref_utm) %>% 
       rename(next_right = subplot)
   ) %>% 
   # Correction to apply
   mutate(dx_utm = x_ref_utm - x_utm, dy_utm = y_ref_utm - y_utm) %>%
-  select(subplot, point_y, dx_utm, dy_utm) ->
+  select(subplot, quadrat_y, dx_utm, dy_utm) ->
   reconcile_right
 # Apply the right-edge correction
 quadrats %>% 
@@ -688,10 +694,10 @@ quadrats %>%
       inner_join(reconcile_right) %>% 
       # Corrected coordinates
       mutate(
-        x_utm_right = x_utm + dx_utm * point_x / right_edge,
-        y_utm_right = y_utm + dy_utm * point_x / right_edge,
+        x_utm_right = x_utm + dx_utm * quadrat_x / right_edge,
+        y_utm_right = y_utm + dy_utm * quadrat_x / right_edge,
       ) %>% 
-      select(subplot, point_x, point_y, x_utm_right, y_utm_right)    
+      select(subplot, quadrat_x, quadrat_y, x_utm_right, y_utm_right)    
   ) %>% 
   # Save the coordinates
   mutate(
@@ -704,9 +710,9 @@ quadrats %>%
 quadrats %>% 
   filter(
     subplot %in% to_correct_up &
-      point_y == up_edge
+      quadrat_y == up_edge
   ) %>% 
-  select(subplot, point_x, x_utm, y_utm) %>% 
+  select(subplot, quadrat_x, x_utm, y_utm) %>% 
   # Get the next plot up
   left_join(
     subplots %>% 
@@ -716,13 +722,13 @@ quadrats %>%
   left_join(
     quadrats %>% 
       rename(x_ref_utm = x_utm, y_ref_utm = y_utm) %>% 
-      filter(point_y == 0) %>% 
-      select(subplot, point_x, x_ref_utm, y_ref_utm) %>% 
+      filter(quadrat_y == 0) %>% 
+      select(subplot, quadrat_x, x_ref_utm, y_ref_utm) %>% 
       rename(next_up = subplot)
   ) %>% 
   # Correction to apply
   mutate(dx_utm = x_ref_utm - x_utm, dy_utm = y_ref_utm - y_utm) %>%
-  select(subplot, point_x, dx_utm, dy_utm) ->
+  select(subplot, quadrat_x, dx_utm, dy_utm) ->
   reconcile_up
 # Apply the right-edge correction
 quadrats %>% 
@@ -732,10 +738,10 @@ quadrats %>%
       inner_join(reconcile_up) %>% 
       # Corrected coordinates
       mutate(
-        x_utm_up = x_utm + dx_utm * point_y / up_edge,
-        y_utm_up = y_utm + dy_utm * point_y / up_edge,
+        x_utm_up = x_utm + dx_utm * quadrat_y / up_edge,
+        y_utm_up = y_utm + dy_utm * quadrat_y / up_edge,
       ) %>% 
-      select(subplot, point_x, point_y, x_utm_up, y_utm_up)    
+      select(subplot, quadrat_x, quadrat_y, x_utm_up, y_utm_up)    
   ) %>% 
   # Save the coordinates
   mutate(
@@ -790,8 +796,8 @@ read.csv2("data/trees.csv") %>%
   # Homogenize the column names
   rename(
     subplot = "Subplot",
-    point_x = "Quadra.nb.X",
-    point_y = "Quadra.nb.Y",
+    quadrat_x = "Quadra.nb.X",
+    quadrat_y = "Quadra.nb.Y",
     x_field = "Dist.X",
     y_field = "Dist.Y",
     diameter = "Diameter"
@@ -807,7 +813,7 @@ La position des arbres a été estimée relativement aux bords de chaque quadrat
 Leur forme réelle a été calculée à l'étape précédente. 
 Les arbres doivent être projetés dans chacun des quadrats réels.
 
-Les fonctions suivantes s'appliquent à chaque quadrat, défini par sa sous-parcelle et son numéro d'ordre, le couple `(point_x,point_y)` qui va de (0, 0) à (9,9).
+Les fonctions suivantes s'appliquent à chaque quadrat, défini par sa sous-parcelle et son numéro d'ordre, le couple `(quadrat_x,quadrat_y)` qui va de (0, 0) à (9,9).
 La matrice de projection de chaque quadrat de ses coordonnées de terrain (repère orthonormé, côtés de 10m) dans le quadrat réel est calculée par la fonction `ortho2real()`.
 Ses arguments sont les coordonnées des coins du quadrats calculées précédemment, à l'exception du coin supérieur droit, inutile.
 
@@ -896,10 +902,10 @@ trees_interpolated <- function(
     trees_in_quadrat) {
   # Indicators to simplify the code later
   is_the_subplot <- quadrats$subplot == subplot
-  is_left <- quadrats$point_x == x_left
-  is_right <- quadrats$point_x == x_left + 1
-  is_down <- quadrats$point_y == y_down
-  is_up <- quadrats$point_y == y_down + 1
+  is_left <- quadrats$quadrat_x == x_left
+  is_right <- quadrats$quadrat_x == x_left + 1
+  is_down <- quadrats$quadrat_y == y_down
+  is_up <- quadrats$quadrat_y == y_down + 1
   # Corners of the quadrat
   x_ul <- quadrats[is_the_subplot & is_up & is_left, "x"]
   x_ur <- quadrats[is_the_subplot & is_up & is_right, "x"]
@@ -954,7 +960,7 @@ for (subplot in subplots_field) {
     for (y_down in 0:(up_edge - 1)) {
       # Which trees?
       is_in_quadrat <- trees$subplot == subplot &
-        trees$point_x == x_left & trees$point_y == y_down
+        trees$quadrat_x == x_left & trees$quadrat_y == y_down
       # Compute the interpolated tree coordinates
       trees[is_in_quadrat, c("x_quadrat", "y_quadrat")] <- trees_interpolated(
         subplot, 
@@ -979,8 +985,8 @@ trees %>%
     quadrats %>% 
       # Get the coordinates of the origin of the quadrats and 
       # the coordinates of the corners of the quadrats
-      select(subplot, point_x, point_y, down_left_x_utm, down_left_y_utm, x, y),
-      by = c("subplot", "point_x", "point_y")
+      select(subplot, quadrat_x, quadrat_y, down_left_x_utm, down_left_y_utm, x, y),
+      by = c("subplot", "quadrat_x", "quadrat_y")
   ) %>% 
   # Coordinates of the trees in the quadrat coordinates
   mutate(x = x_quadrat + x, y = y_quadrat + y) -> trees
@@ -993,18 +999,18 @@ map_quadrats <- function(trees, the_subplot, x_min, x_max, y_min, y_max) {
   trees %>% 
   filter(
     subplot == the_subplot &
-    point_x %in% (x_min %/% 10):((x_max - 1) %/% 10) &
-    point_y %in% (y_min %/% 10):((y_max - 1) %/% 10)
+    quadrat_x %in% (x_min %/% 10):((x_max - 1) %/% 10) &
+    quadrat_y %in% (y_min %/% 10):((y_max - 1) %/% 10)
   ) %>% 
-  mutate(quadrat = 10 * point_x + point_y) %>%
+  mutate(quadrat = 10 * quadrat_x + quadrat_y) %>%
   ggplot() +
     geom_point(aes(x = x, y = y, color = as.factor(quadrat))) +
     geom_point(
       data = quadrats %>% 
         filter(
           subplot == the_subplot &
-          point_x %in% (x_min %/% 10):(x_max %/% 10) &
-          point_y %in% (y_min %/% 10):(y_max %/% 10)
+          quadrat_x %in% (x_min %/% 10):(x_max %/% 10) &
+          quadrat_y %in% (y_min %/% 10):(y_max %/% 10)
         ),
       aes(x = x, y = y)
     ) +
@@ -1070,8 +1076,8 @@ La courbe en pointillés rassemble tous les arbres.
 ```{r}
 trees %>% 
   mutate(
-    x_field_subplot = x_field + 10 * point_x,
-    y_field_subplot = y_field + 10 * point_y,
+    x_field_subplot = x_field + 10 * quadrat_x,
+    y_field_subplot = y_field + 10 * quadrat_y,
     correction_dx = x - x_field_subplot,
     correction_dy = y - y_field_subplot,
     correction_d = sqrt(correction_dx^2 + correction_dy^2)
