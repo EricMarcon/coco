@@ -399,13 +399,14 @@ Pour chaque point, la distance à son voisin de gauche (`y` identique) et du bas
 
 Le code suivant:
 
-- lit le tableau des mesures et prépare deux colonnes supplémentaires, `x` et `y`, pour y placer les coordonnées à calculer,
+- lit le tableau des mesures et prépare deux colonnes supplémentaires, `x` et `y`, pour y placer les coordonnées à calculer et transforme le tibble en dataframe pour que les extractions futures, comme `quadrats[i, "x"]`, soient des scalaires et non des tibbles
 
 ```{r}
 # data
 read_xlsx("data/plots.xlsx", sheet = "quadrats") %>% 
   # Add columns for the correct coordinates
-  mutate(x = 0, y = 0) -> quadrats
+  mutate(x = 0, y = 0) %>% 
+  as.data.frame() -> quadrats
 # Edge point numbers
 right_edge <- up_edge <- 10
 # Quadrat size
@@ -414,99 +415,109 @@ x_M_field <- y_M_field <- 10
 quadrats %>% 
   group_by(subplot) %>% 
   summarise(points_n = n()) %>% 
-  # 11 x 11 points to define quadrats, minus the origin
-  filter(points_n == (right_edge + 1) * (up_edge + 1) - 1) %>% 
+  # 10 x 10 points to define quadrats
+  filter(points_n == right_edge * up_edge) %>% 
   pull(subplot) -> subplots_field
 # List dummy subplots, 
 # used to correct right or up edges of subplots measured in the field
 subplots_dummy <- setdiff(unique(quadrats$subplot), subplots_field)
-
 ```
 
-- ajoute les coins inférieurs gauche (0, 0),
+- ajoute les piquets des bordures droites et supérieures, absents du tableau Excel,
 
 ```{r}
-# Add points (0,0) to plots
+# Prepare a new table to add rows
+quadrats %>% 
+  # Delete all rows
+  filter(subplot == 0) ->
+  quadrats_edges
+# Add points (10, y) and (x, 10) to subplots
 for (subplot_number in unique(quadrats$subplot)) {
-  quadrats %>% 
+  is_in_subplot <- (quadrats$subplot == subplot_number)
+  for (x in unique(quadrats[is_in_subplot, "quadra.nb.X"])) {
+    # Add the up-edge piquets
+    quadrats_edges %>% 
+      add_row(
+        subplot = subplot_number,
+        quadra.nb.X = x,
+        quadra.nb.Y = up_edge,
+        # Distance to the next piquet is in the previous piquet data
+        Q_lengthX = quadrats[
+          is_in_subplot & 
+            (quadrats$quadra.nb.X == x) &
+            (quadrats$quadra.nb.Y == up_edge - 1), 
+          "Q_lengthX1"
+        ],
+        x = 0, 
+        y = 0
+      ) -> quadrats_edges    
+  }
+  for (y in unique(quadrats[is_in_subplot, "quadra.nb.Y"])) {
+    # Add the right-edge piquet
+    quadrats_edges %>% 
+      add_row(
+        subplot = subplot_number,
+        quadra.nb.X = right_edge,
+        quadra.nb.Y = y,
+        # Distance to the next piquet is in the previous piquet data
+        Q_lengthY = quadrats[
+          is_in_subplot & 
+            (quadrats$quadra.nb.X == right_edge - 1) &
+            (quadrats$quadra.nb.Y == y) , 
+          "Q_lengthY1"
+        ],
+        x = 0, 
+        y = 0
+      ) -> quadrats_edges    
+  }
+  quadrats_edges %>% 
+    # Add the top right corner
     add_row(
       subplot = subplot_number,
-      point_x = 0,
-      point_y = 0,
-      x = 0,
+      quadra.nb.X = right_edge,
+      quadra.nb.Y = up_edge,
+      x = 0, 
       y = 0
-    ) -> quadrats
+    ) -> quadrats_edges    
 }
-```
-
-- trie les données et transforme le tibble en dataframe pour que les extractions futures, comme `quadrats[i, "x"]`, soient des scalaires et non des tibbles,
-
-```{r}
-# Sort so that the next point can rely on previous ones
+# Add the new rows to quadrats and sort for readability
 quadrats %>% 
-  arrange(subplot, point_x, point_y) %>% 
-  as.data.frame() -> quadrats
+  bind_rows(quadrats_edges) %>% 
+  arrange(subplot, quadra.nb.X, quadra.nb.Y) -> quadrats  
 ```
 
-- calcule les coordonnées des points situés sur les bords gauche et bas des hectares par simple cumul des distances mesurées depuis l'origine,
-
-```{r}
-# Deal with edges: cumulative sum of distances from the origin
-for (plot_number in unique(quadrats$subplot)) {
-  is_left_edge <- 
-    quadrats$subplot == plot_number &
-    quadrats$point_x == 0 &
-    quadrats$point_y != 0
-  quadrats[is_left_edge, "y"] <- cumsum(quadrats[is_left_edge, "d_down"])
-  is_down_edge <- 
-    quadrats$subplot == plot_number &
-    quadrats$point_x != 0 &
-    quadrats$point_y == 0
-  quadrats[is_down_edge, "x"] <- cumsum(quadrats[is_down_edge, "d_left"])
-}
-```
-
-- calcule les coordonnées de tous les autres points par triangulation.
+- calcule les coordonnées de tous les points par triangulation.
 
 ```{r}
 # Compute the positions of the points
 for (i in seq_len(nrow(quadrats))) {
-  # Ignore the edges
-  if (quadrats[i, "point_x"] != 0 & quadrats[i, "point_y"] != 0) {
-    x_left = quadrats[
-      quadrats$subplot == quadrats[i, "subplot"] &
-        quadrats$point_x == max(quadrats[i, "point_x"] - 1, 0) &
-        quadrats$point_y == quadrats[i, "point_y"],
-      "x"
-    ]
-    y_left = quadrats[
-      quadrats$subplot == quadrats[i, "subplot"] &
-        quadrats$point_x == max(quadrats[i, "point_x"] - 1, 0) &
-        quadrats$point_y == quadrats[i, "point_y"],
-      "y"
-    ]
-    x_down = quadrats[
-      quadrats$subplot == quadrats[i, "subplot"] &
-        quadrats$point_x == quadrats[i, "point_x"] &
-        quadrats$point_y == max(quadrats[i, "point_y"] - 1, 0),
-      "x"
-    ]
-    y_down = quadrats[
-      quadrats$subplot == quadrats[i, "subplot"] &
-        quadrats$point_x == quadrats[i, "point_x"] &
-        quadrats$point_y == max(quadrats[i, "point_y"] - 1, 0),
-      "y"
-    ]
-    quadrats[i, c("x", "y")] <- 
-      c(x_left, y_down) +
-      next_point(
-        x_left = x_left,
-        y_left = y_left,
-        x_down = x_down,
-        y_down = y_down,
-        d_left = quadrats[i, "d_left"],
-        d_down = quadrats[i, "d_down"]
-      )
+  # Compute x. Ignore edges
+  if (quadrats[i, "quadra.nb.X"] > 0) {
+    # Previous piquet on the left
+    is_piquet_left <- 
+      # Same subplot
+      (quadrats$subplot == quadrats$subplot[i]) &
+      # Left column
+      (quadrats$quadra.nb.X == quadrats$quadra.nb.X[i] - 1) & 
+      # Same row
+      (quadrats$quadra.nb.Y == quadrats$quadra.nb.Y[i])
+    # Cumulate
+    quadrats[i, "x"] <- 
+      quadrats[is_piquet_left, "x"] + quadrats[is_piquet_left, "Q_lengthX"]
+  }
+  # Compute y. Ignore edges
+  if (quadrats[i, "quadra.nb.Y"] > 0) {
+    # Previous piquet down
+    is_piquet_below <- 
+      # Same subplot
+      (quadrats$subplot == quadrats$subplot[i]) &
+      # Same column
+      (quadrats$quadra.nb.X == quadrats$quadra.nb.X[i]) & 
+      # Row below
+      (quadrats$quadra.nb.Y == quadrats$quadra.nb.Y[i] - 1)
+    # Cumulate
+    quadrats[i, "y"] <- 
+      quadrats[is_piquet_below, "y"] + quadrats[is_piquet_below, "Q_lengthY"]
   }
 }
 ```
