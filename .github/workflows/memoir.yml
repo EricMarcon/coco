@@ -32,6 +32,9 @@ jobs:
           lapply(list.files(pattern = "*.Rmd"), function(file) rmarkdown::render(file, "all"))
           memoiR::build_githubpages()
         shell: Rscript {0}
+      - name: GH Pages Theme
+        run: |
+          echo 'theme: jekyll-theme-slate' > docs/_config.yml
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
