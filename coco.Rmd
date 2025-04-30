@@ -800,7 +800,7 @@ read.csv2("data/trees.csv") %>%
     quadrat_y = "Quadra.nb.Y",
     x_field = "Dist.X",
     y_field = "Dist.Y",
-    diameter = "Diameter"
+    diameter = "DBH"
   ) %>% 
   drop_na() -> 
   trees
